@@ -114,9 +114,12 @@ nearest_cdi <- admins |>
   ungroup() |>
   select(administration_id, lab_subject_id, cdi_age)
 
-# produces at that chosen CDI age, per item
+# produces at that chosen CDI age, per item. A child may have multiple CDI
+# records at the same age (different forms / source files), so collapse to
+# "produced on any record" to get one row per (child, age, item).
 produces_at_age <- items_long |>
-  distinct(lab_subject_id, cdi_age, item, produces)
+  group_by(lab_subject_id, cdi_age, item) |>
+  summarise(produces = as.integer(any(produces == 1)), .groups = "drop")
 
 precise <- base |>
   inner_join(nearest_cdi, by = "administration_id") |>

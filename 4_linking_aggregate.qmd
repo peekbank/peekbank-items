@@ -51,12 +51,14 @@ Direction we *want*: earlier-acquired (low AoA) words should be recognized
 
 ```{r naive}
 plot_corr <- function(data, x, y, xlab, ylab) {
+  r <- cor(data[[x]], data[[y]], use = "complete.obs")
   ggplot(data, aes(x = .data[[x]], y = .data[[y]])) +
     geom_point(aes(size = n_trials), alpha = .4) +
     geom_smooth(method = "lm") +
-    ggpmisc::stat_correlation() +
     geom_text_repel(aes(label = target_label), size = 2.3, max.overlaps = 8) +
-    xlab(xlab) + ylab(ylab) + theme(legend.position = "none")
+    xlab(xlab) + ylab(ylab) +
+    labs(subtitle = sprintf("r = %.2f", r)) +
+    theme(legend.position = "none")
 }
 
 plot_corr(mdf, "aoa", "avg_accuracy", "Wordbank AoA (months)", "Avg accuracy")
