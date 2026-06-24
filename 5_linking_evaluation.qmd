@@ -1,0 +1,232 @@
+---
+title: "5. Linking hypotheses × data settings (unified evaluation)"
+subtitle: "peekbank-items"
+format:
+  html:
+    embed-resources: true
+    toc: true
+    code-fold: true
+execute:
+  warning: false
+  message: false
+---
+
+This is the core notebook. We test a small set of **linking hypotheses** — ways
+that a child's word knowledge could predict their trial-level LWL accuracy —
+and evaluate each one across the available **data settings**, on a common metric
+(cross-validated prediction of trial elogit, generalizing to held-out children).
+
+**Data settings** (how word knowledge is represented):
+
+- **aggregate** — word difficulty only, no child info: `k = -b` (IRT ease).
+- **imputed** — `P(child knows word)` from the child's CDI-derived ability
+  `theta` and the word's IRT params (large/noisy; all CDI children).
+- **precise** — the child *actually* produced the word on the CDI (small/clean;
+  the `adams_marchman_2018` subset with item-level CDI).
+
+**Linking hypotheses** (oriented so target knowledge `k_t` helps, distractor
+knowledge `k_d` hurts):
+
+- **H0** age only (baseline)
+- **H1** target knowledge only: `+ k_t`
+- **H2** additive: `+ k_t + k_d`
+- **H3** 2AFC contrast: `+ (k_t - k_d)`  — the theory-derived predictor
+  (for knowledge probabilities, `E[correct] = 0.5 + 0.5*(p_t - p_d)`)
+
+The whole point of crossing hypotheses × settings is to ask: does the same
+linking hypothesis win regardless of how knowledge is measured, and how much
+does the precise (item-level) measurement buy us over the imputed one?
+
+```{r setup}
+library(here)
+library(lme4)
+source(here("helper", "common.R"))
+
+d_trial <- readRDS(here("cached_intermediates", "1_d_trial.Rds")) |> ungroup()
+d_sub   <- readRDS(here("cached_intermediates", "1_d_sub.Rds"))
+cdi     <- readRDS(here("cached_intermediates", "3_cdi_difficulty.Rds"))
+subset_dat <- readRDS(here("cached_intermediates", "0_cdi_items_subset.Rds"))
+
+p2pl <- function(theta, a, b) plogis(a * (theta - b))
+```
+
+## Build the trial frame with knowledge signals
+
+Start from trials with a usable elogit, join IRT difficulty for target and
+distractor, and the child's CDI-derived ability.
+
+```{r build-frame}
+cdi_diff <- cdi$item_pars |> select(item, a, b)
+
+base <- d_trial |>
+  rename(accuracy = long_window_accuracy, elogit = long_window_elogit) |>
+  filter(!is.na(elogit)) |>
+  mutate(log_age = log(age), log_age_centered = log_age - mean(log_age)) |>
+  # target IRT params
+  left_join(cdi_diff |> rename(a_t = a, b_t = b), by = c("target_label" = "item")) |>
+  # distractor IRT params
+  left_join(cdi_diff |> rename(a_d = a, b_d = b), by = c("distractor_label" = "item")) |>
+  # child ability (theta) from CDI prod proportion via the WS bridge
+  left_join(d_sub |> select(administration_id, prod), by = "administration_id") |>
+  mutate(theta = cdi$prop_to_theta(prod))
+
+# aggregate signals (no child info): ease = -difficulty
+base <- base |>
+  mutate(
+    agg_k_t = -b_t,
+    agg_k_d = -b_d,
+    # imputed signals: P(child knows word)
+    imp_k_t = p2pl(theta, a_t, b_t),
+    imp_k_d = p2pl(theta, a_d, b_d)
+  )
+```
+
+### Precise subset signals (item-level CDI)
+
+Bridge peekbank administrations to the Stanford item-level CDI via
+`peekbank_admin_id`, then look up whether the child produced each target /
+distractor word.
+
+```{r precise-signals}
+linked <- subset_dat$linked
+items_long <- subset_dat$cdi_items_long |>
+  mutate(item = str_to_lower(item))
+
+# produces lookup: lab_subject_id x item -> produced? (use the CDI nearest in age;
+# here we take 'ever produced' across the child's CDI records as a robust proxy)
+produces_lookup <- items_long |>
+  group_by(lab_subject_id, item) |>
+  summarise(produces = as.integer(any(produces == 1)), .groups = "drop")
+
+# map peekbank administration_id -> lab_subject_id
+admin_to_sub <- linked |>
+  distinct(peekbank_admin_id, lab_subject_id)
+
+precise <- base |>
+  inner_join(admin_to_sub, by = c("administration_id" = "peekbank_admin_id")) |>
+  left_join(produces_lookup |> rename(prec_k_t = produces),
+            by = c("lab_subject_id", "target_label" = "item")) |>
+  left_join(produces_lookup |> rename(prec_k_d = produces),
+            by = c("lab_subject_id", "distractor_label" = "item"))
+
+cat("Precise subset: ", n_distinct(precise$lab_subject_id), " children, ",
+    nrow(precise), " trials; ",
+    "target word matched CDI item in ", round(mean(!is.na(precise$prec_k_t)) * 100), "% of trials\n", sep = "")
+```
+
+## Evaluation harness
+
+For a given data frame and a set of fixed-effect terms, fit
+`elogit ~ <age + terms> + (1|administration_id) + (1|dataset_name)` and evaluate
+with **child-grouped 5-fold CV**, predicting with fixed effects only
+(`re.form = NA`) so we measure how well the *linking signal* generalizes to new
+children. Metric: out-of-sample R² (squared correlation of predicted vs observed
+elogit), averaged over folds.
+
+```{r harness}
+set.seed(42)
+
+cv_r2 <- function(data, terms, n_folds = 5) {
+  data <- data |> filter(if_all(all_of(terms[terms %in% names(data)]), ~ !is.na(.x)))
+  # build formula
+  fixed <- paste(c("log_age_centered", terms), collapse = " + ")
+  form <- as.formula(paste0("elogit ~ ", fixed,
+                            " + (1|administration_id) + (1|dataset_name)"))
+  # assign folds by child
+  subs <- unique(data$administration_id)
+  fold <- setNames(sample(rep(1:n_folds, length.out = length(subs))), subs)
+  data$.fold <- fold[as.character(data$administration_id)]
+
+  preds <- numeric(nrow(data)); preds[] <- NA
+  for (f in 1:n_folds) {
+    tr <- data |> filter(.fold != f)
+    te <- which(data$.fold == f)
+    m <- tryCatch(
+      lmer(form, data = tr, control = lmerControl(optimizer = "bobyqa")),
+      error = function(e) NULL)
+    if (is.null(m)) next
+    preds[te] <- predict(m, newdata = data[te, ], re.form = NA, allow.new.levels = TRUE)
+  }
+  ok <- !is.na(preds)
+  if (sum(ok) < 10) return(NA_real_)
+  cor(preds[ok], data$elogit[ok])^2
+}
+
+# hypotheses as term sets, parameterized by a setting's knowledge column names
+make_terms <- function(kt, kd) list(
+  H0 = character(0),
+  H1 = kt,
+  H2 = c(kt, kd),
+  H3 = paste0("I(", kt, " - ", kd, ")")
+)
+
+run_setting <- function(data, kt, kd, label) {
+  # need both knowledge columns present
+  d <- data |> filter(!is.na(.data[[kt]]), !is.na(.data[[kd]]))
+  terms <- make_terms(kt, kd)
+  tibble(
+    setting = label,
+    hypothesis = names(terms),
+    n_trials = nrow(d),
+    cv_r2 = map_dbl(terms, ~ cv_r2(d, .x))
+  )
+}
+```
+
+## Apples-to-apples: all settings on the precise subset
+
+The precise signals exist only for the `adams_marchman_2018` subset, so for a
+fair three-way comparison we run **all three settings on exactly these trials**.
+
+```{r compare-subset}
+sub_frame <- precise |>
+  filter(!is.na(prec_k_t), !is.na(prec_k_d),
+         !is.na(agg_k_t), !is.na(agg_k_d),
+         !is.na(imp_k_t), !is.na(imp_k_d))
+
+subset_results <- bind_rows(
+  run_setting(sub_frame, "agg_k_t",  "agg_k_d",  "aggregate"),
+  run_setting(sub_frame, "imp_k_t",  "imp_k_d",  "imputed"),
+  run_setting(sub_frame, "prec_k_t", "prec_k_d", "precise")
+)
+
+subset_results |>
+  select(setting, hypothesis, cv_r2) |>
+  pivot_wider(names_from = hypothesis, values_from = cv_r2) |>
+  kable(digits = 4, caption = paste0("CV R2 on the precise subset (",
+        n_distinct(sub_frame$lab_subject_id), " children, ", nrow(sub_frame), " trials)"))
+```
+
+```{r compare-subset-delta}
+subset_results |>
+  group_by(setting) |>
+  mutate(delta_vs_H0 = cv_r2 - cv_r2[hypothesis == "H0"]) |>
+  filter(hypothesis != "H0") |>
+  ggplot(aes(x = hypothesis, y = delta_vs_H0, fill = setting)) +
+  geom_col(position = "dodge") +
+  ylab("CV R2 improvement over age-only baseline") +
+  ggtitle("Linking hypotheses x data settings (precise subset)")
+```
+
+## Power run: aggregate and imputed on the full data
+
+```{r compare-full}
+full_results <- bind_rows(
+  run_setting(base, "agg_k_t", "agg_k_d", "aggregate (full)"),
+  run_setting(base |> filter(!is.na(theta)), "imp_k_t", "imp_k_d", "imputed (full)")
+)
+
+full_results |>
+  select(setting, hypothesis, n_trials, cv_r2) |>
+  pivot_wider(names_from = hypothesis, values_from = cv_r2) |>
+  kable(digits = 4, caption = "CV R2 on full data (aggregate and imputed settings)")
+```
+
+## Read
+
+The subset table is the key comparison: reading **down a column** shows whether a
+given linking hypothesis improves as knowledge measurement sharpens
+(aggregate → imputed → precise); reading **across a row** shows which hypothesis
+form (target-only vs additive vs 2AFC contrast) wins. The full-data table checks
+that the winning pattern holds with real power on the imputed pathway that scales
+to the whole database.

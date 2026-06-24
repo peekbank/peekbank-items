@@ -1,0 +1,119 @@
+---
+title: "4. Aggregate item-level linking (the classic analysis, updated)"
+subtitle: "peekbank-items"
+format:
+  html:
+    embed-resources: true
+    toc: true
+    code-fold: true
+execute:
+  warning: false
+  message: false
+---
+
+This notebook reproduces the **background failure** (`4A`: naive word-level LWL
+accuracy correlates with Wordbank AoA in the *wrong* direction) on 2026.1 data,
+then tests whether the two methodological fixes help **at the aggregate item
+level**:
+
+1. a better LWL measure (animacy-adjusted random intercept vs raw accuracy);
+2. a better CDI measure (IRT difficulty `b` vs AoA).
+
+No child information enters here — this is the "aggregate" data setting. The
+trial-level child×item comparison across settings is in notebook 5.
+
+```{r setup}
+library(here)
+library(ggrepel)
+source(here("helper", "common.R"))
+
+lwl <- readRDS(here("cached_intermediates", "2_lwl_item.Rds"))
+cdi <- readRDS(here("cached_intermediates", "3_cdi_difficulty.Rds"))
+
+# CDI-side difficulty per word
+cdi_diff <- cdi$item_pars |>
+  select(item, a, b) |>
+  left_join(cdi$aoas |> select(item, aoa), by = "item")
+
+# LWL-side measures per word, merged with CDI difficulty
+mdf <- lwl$lwl_word |>
+  mutate(item = target_label) |>
+  inner_join(cdi_diff, by = "item")
+```
+
+We have `r nrow(mdf)` words with both LWL and CDI measures.
+
+## The naive failure: raw accuracy vs AoA
+
+Direction we *want*: earlier-acquired (low AoA) words should be recognized
+**better** (high accuracy) → a **negative** slope.
+
+```{r naive}
+plot_corr <- function(data, x, y, xlab, ylab) {
+  ggplot(data, aes(x = .data[[x]], y = .data[[y]])) +
+    geom_point(aes(size = n_trials), alpha = .4) +
+    geom_smooth(method = "lm") +
+    ggpmisc::stat_correlation() +
+    geom_text_repel(aes(label = target_label), size = 2.3, max.overlaps = 8) +
+    xlab(xlab) + ylab(ylab) + theme(legend.position = "none")
+}
+
+plot_corr(mdf, "aoa", "avg_accuracy", "Wordbank AoA (months)", "Avg accuracy")
+```
+
+As in the background analysis, this goes the **wrong way**: later-acquired words
+show *higher* accuracy, driven by age confounding (easy words are tested in
+younger samples) and salience.
+
+## Fix 1: animacy-adjusted LWL difficulty
+
+```{r fix-lwl}
+plot_corr(mdf, "aoa", "intercept_adj",
+          "Wordbank AoA (months)", "LWL ease (animacy-adjusted intercept)")
+```
+
+## Fix 2: IRT difficulty instead of AoA
+
+```{r fix-cdi}
+plot_corr(mdf, "b", "intercept_adj",
+          "CDI IRT difficulty (b)", "LWL ease (animacy-adjusted intercept)")
+```
+
+## Summary of correlations
+
+All cells are correlations of an LWL measure with a CDI difficulty measure.
+**Success = negative** (harder/later word ⇒ lower LWL ease). The naive cell
+(top-left, `avg_accuracy` × `aoa`) is the one the background found positive.
+
+```{r summary-table}
+lwl_measures <- c("avg_accuracy", "avg_elogit", "intercept_base", "intercept_adj")
+cdi_measures <- c("aoa", "b")
+
+grid <- expand_grid(lwl = lwl_measures, cdi = cdi_measures, hf_only = c(FALSE, TRUE))
+
+results <- grid |>
+  rowwise() |>
+  mutate(
+    r = {
+      d <- if (hf_only) filter(mdf, n_trials > 200) else mdf
+      cor(d[[lwl]], d[[cdi]], use = "complete.obs")
+    },
+    n_words = if (hf_only) sum(mdf$n_trials > 200) else nrow(mdf)
+  ) |>
+  ungroup()
+
+results |>
+  mutate(cell = paste0(cdi, ifelse(hf_only, " (n>200)", ""))) |>
+  select(lwl, cell, r) |>
+  pivot_wider(names_from = cell, values_from = r) |>
+  kable(digits = 2, caption = "Correlation of LWL measure (rows) with CDI difficulty (cols). Negative = success.")
+```
+
+## Read
+
+The table makes the diagnosis concrete: which combination of LWL measure and CDI
+measure (and frequency filter) is needed before the aggregate item-level
+correlation even points the right way. Whatever the verdict, the aggregate level
+throws away the within-child structure — a child only "knows" a word
+probabilistically, and the 2AFC decision depends on the *distractor* too. That
+structure is the subject of notebook 5.

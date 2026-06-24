@@ -1,0 +1,317 @@
+---
+title: "0. Load data, cache, and descriptives"
+subtitle: "peekbank-items"
+format:
+  html:
+    embed-resources: true
+    toc: true
+    code-fold: true
+execute:
+  warning: false
+  message: false
+---
+
+This notebook loads the **peekbank 2026.1** release, builds the cached
+intermediates used by the rest of the project, and reports descriptives.
+
+Data loaders are adapted from the `peekbank-development` paper repository
+(`0_get_data.qmd`). They are reproduced here so this project is self-contained
+and reproducible against a fixed release. The heavy database pulls are guarded:
+they only run if the cache file is missing, so re-rendering is fast.
+
+```{r setup}
+library(here)
+library(peekbankr)
+library(dtplyr)
+library(fuzzyjoin)
+source(here("helper", "common.R"))
+source(here("helper", "rt_helper.R"))
+
+DB_VERSION <- "2026.1"
+
+# minimum trials to retain a participant (used downstream in notebook 1)
+ACC_MIN_TRIAL_CUTOFF <- 4
+RT_MIN_TRIAL_CUTOFF <- 2
+
+# location of the small/precise item-level CDI subset (standard_model_2)
+SM2_PEEKBANK <- here("..", "..", "standard_model_2", "data", "peekbank")
+```
+
+## Pull raw data from the database
+
+We pre-filter for age (<= 60 mo), English, and vanilla trials to keep the RAM
+footprint manageable.
+
+```{r pull-aois}
+raw_aois_path <- here("cached_intermediates", "raw_aois.rds")
+joined_path <- here("cached_intermediates", "0_aoi_data_joined.Rds")
+# The raw AOI pull is large/slow; skip it entirely if the joined frame exists.
+if (!file.exists(raw_aois_path) && !file.exists(joined_path)) {
+  con <- connect_to_peekbank(db_version = DB_VERSION)
+  all_aoi_timepoints <- get_aoi_timepoints(connection = con, rle = FALSE)
+  saveRDS(all_aoi_timepoints, raw_aois_path)
+}
+```
+
+```{r pull-tables}
+tables_path <- here("cached_intermediates", "raw_tables.rds")
+if (!file.exists(tables_path)) {
+  con <- connect_to_peekbank(db_version = DB_VERSION)
+  raw_tables <- list(
+    stimuli         = collect(get_stimuli(connection = con)),
+    administrations = collect(get_administrations(connection = con)),
+    subjects        = unpack_aux_data(collect(get_subjects(connection = con))),
+    trial_types     = collect(get_trial_types(connection = con)),
+    trials          = unpack_aux_data(collect(get_trials(connection = con))),
+    datasets        = collect(get_datasets(connection = con))
+  )
+  saveRDS(raw_tables, tables_path)
+}
+raw_tables <- readRDS(tables_path)
+all_stimuli         <- raw_tables$stimuli
+all_administrations <- raw_tables$administrations
+all_subjects        <- raw_tables$subjects
+all_trial_types     <- raw_tables$trial_types
+all_trials          <- raw_tables$trials
+all_datasets        <- raw_tables$datasets
+```
+
+## Join AOI timepoints with metadata
+
+```{r join}
+if (!file.exists(joined_path)) {
+  all_aoi_timepoints <- readRDS(raw_aois_path)
+  aoi_data_joined <- all_aoi_timepoints |>
+    inner_join(all_administrations |>
+      select(dataset_name, dataset_id, subject_id, administration_id, age) |>
+      filter(age <= 60)) |>
+    inner_join(all_trials |>
+      select(dataset_name, dataset_id, trial_id, trial_type_id, trial_order)) |>
+    inner_join(all_trial_types |>
+      select(dataset_name, dataset_id, trial_type_id, target_id, distractor_id,
+             target_side, vanilla_trial, full_phrase_language) |>
+      filter(vanilla_trial == TRUE, full_phrase_language == "eng")) |>
+    mutate(stimulus_id = target_id) |>
+    left_join(all_stimuli |>
+      select(dataset_name, dataset_id, stimulus_id, english_stimulus_label)) |>
+    select(dataset_name, subject_id, administration_id, trial_id, trial_order,
+           dataset_id, full_phrase_language, stimulus_id, distractor_id, t_norm,
+           age, aoi, english_stimulus_label, target_side, vanilla_trial) |>
+    rename(target_label = english_stimulus_label, target_id = stimulus_id) |>
+    left_join(all_stimuli |>
+      select(stimulus_id, dataset_id, english_stimulus_label) |>
+      rename(distractor_id = stimulus_id, distractor_label = english_stimulus_label))
+  saveRDS(aoi_data_joined, file = joined_path)
+}
+aoi_data_joined <- readRDS(joined_path)
+```
+
+Datasets present after filtering:
+
+```{r dataset-list}
+length(unique(aoi_data_joined$dataset_name))
+sort(unique(aoi_data_joined$dataset_name))
+```
+
+## Item cleanup
+
+Remove bilingual datasets, code accuracy, and apply the hand-curated item
+merge/exclude list (`metadata/included_items_2026.1.csv`).
+
+```{r item-cleanup}
+d_joined <- aoi_data_joined |>
+  filter(!dataset_name %in% c("sander-montant_2022", "kremin_2021",
+                              "byers-heinlein_2017", "potter_remix")) |>
+  select(dataset_name, subject_id, administration_id, trial_id, trial_order,
+         dataset_id, target_id, t_norm, age, aoi, target_label, distractor_label,
+         target_side) |>
+  mutate(
+    correct = case_when(aoi == "target" ~ 1, aoi == "distractor" ~ 0, TRUE ~ NA),
+    target_label = str_to_lower(target_label),
+    distractor_label = str_to_lower(distractor_label)
+  )
+
+included_items <- read_csv(here("metadata", "included_items_2026.1.csv"))
+
+d_aoi <- d_joined |>
+  left_join(included_items, by = join_by(target_label == item)) |>
+  left_join(included_items, by = join_by(distractor_label == item),
+            suffix = c("_target", "_distractor")) |>
+  filter(include_target == 1, include_distractor == 1) |>
+  mutate(
+    target_label = ifelse(is.na(rename_to_target), target_label, rename_to_target),
+    distractor_label = ifelse(is.na(rename_to_distractor), distractor_label, rename_to_distractor)
+  ) |>
+  select(-include_target, -include_distractor, -rename_to_distractor, -rename_to_target)
+```
+
+## Timecourse cleanup
+
+Clip to a common [-4000, 4000] ms window. (Datasets vary in missingness due to
+internal exclusions, data extent, and NA padding.)
+
+```{r timecourse}
+d_missing <- d_aoi |>
+  group_by(dataset_name, t_norm) |>
+  summarise(prop_data = mean(!is.na(correct)), n = n())
+
+ggplot(d_missing, aes(x = t_norm, y = prop_data)) +
+  facet_wrap(~dataset_name) +
+  geom_line() +
+  geom_vline(xintercept = c(-4000, 4000), lty = 3) +
+  ylab("Proportion non-missing")
+
+d_aoi <- d_aoi |> filter(t_norm >= -4000, t_norm <= 4000)
+saveRDS(d_aoi, file = here("cached_intermediates", "0_d_aoi.Rds"))
+```
+
+## CDI summary scores
+
+Peekbank's CDI aux data contains only **summary scores** (total rawscore per
+administration), not item-level responses. We compute a CDI percent
+(rawscore / instrument length) and fuzzy-join to the LWL administrations on
+subject and age (max age distance = 1 mo), averaging when an LWL admin matches
+multiple CDIs.
+
+```{r cdi-summary}
+admin_info <- all_administrations |>
+  distinct(subject_id, dataset_id, administration_id, age) |>
+  left_join(all_datasets |> select(dataset_id, dataset_name))
+
+eng_cdi_admins <- all_subjects |>
+  unnest(subject_aux_data) |>
+  filter(!is.na(cdi_responses)) |>
+  unnest(cdi_responses) |>
+  filter(language == "English (American)") |>
+  mutate(
+    instrument_length = case_when(
+      instrument_type == "ws" ~ 680,
+      instrument_type == "wg" ~ 396,
+      instrument_type == "wsshort" ~ 100,
+      instrument_type == "wgshort" ~ 100,
+      .default = NA
+    ),
+    CDI_percent = rawscore / instrument_length
+  ) |>
+  select(subject_id, age, measure, CDI_percent) |>
+  pivot_wider(names_from = "measure", values_from = "CDI_percent",
+              values_fill = NA, values_fn = mean)
+
+# fuzzy join: scale subject_id by 10 so off-by-one age can't cross subjects
+cdi_data <- fuzzyjoin::difference_left_join(
+  mutate(admin_info, subject_id = 10 * subject_id),
+  mutate(eng_cdi_admins, subject_id = 10 * subject_id),
+  by = c("subject_id", "age"), max_dist = 1
+) |>
+  select(-age.y, -subject_id.y) |>
+  rename(age = age.x, subject_id = subject_id.x) |>
+  mutate(subject_id = subject_id / 10) |>
+  group_by(subject_id, administration_id, dataset_name, age) |>
+  summarise(prod = mean(prod, na.rm = TRUE), comp = mean(comp, na.rm = TRUE)) |>
+  mutate(across(c("prod", "comp"), ~ ifelse(is.nan(.x), NA, .x))) |>
+  ungroup()
+
+saveRDS(cdi_data, file = here("cached_intermediates", "0_cdi_subjects.Rds"))
+```
+
+## Item-level CDI subset (small / precise pathway)
+
+For the linking analyses we have two pathways:
+
+- **Large / noisy** — all children, but CDI is only a summary score, so per-word
+  knowledge must be *imputed* (child ability × word difficulty; notebook 5).
+- **Small / precise** — a subset with true **item-level** CDI responses, sourced
+  from `standard_model_2`. Here we know whether each child produced each word
+  (notebook 6).
+
+The precise subset links peekbank's `adams_marchman_2018` administrations to
+Stanford lab CDI records via `peekbank_admin_id` / `lab_subject_id`.
+
+```{r cdi-items}
+cdi_items_long <- read_csv(file.path(SM2_PEEKBANK, "stanford_cdi_items_long.csv"))
+linked <- read_csv(file.path(SM2_PEEKBANK, "peekbank_stanford_linked.csv"))
+item_key <- read_csv(file.path(SM2_PEEKBANK, "cdi_master_item_key.csv"))
+
+saveRDS(list(cdi_items_long = cdi_items_long, linked = linked, item_key = item_key),
+        file = here("cached_intermediates", "0_cdi_items_subset.Rds"))
+
+tibble(
+  quantity = c("LWL admins linked", "unique children", "datasets",
+               "children w/ item-level CDI", "CDI items in key"),
+  value = c(nrow(linked), n_distinct(linked$lab_subject_id),
+            n_distinct(linked$dataset_name),
+            length(intersect(linked$lab_subject_id, cdi_items_long$lab_subject_id)),
+            n_distinct(item_key$item))
+) |> kable()
+```
+
+## Descriptives
+
+### Datasets and sample size
+
+```{r desc-datasets}
+d_aoi |>
+  group_by(dataset_name) |>
+  summarise(
+    n_kids = n_distinct(subject_id),
+    n_admins = n_distinct(administration_id),
+    n_trials = n_distinct(paste(administration_id, trial_id)),
+    mean_age = mean(age),
+    n_targets = n_distinct(target_label)
+  ) |>
+  arrange(desc(n_trials)) |>
+  kable(digits = 1)
+```
+
+### Overall totals
+
+```{r desc-totals}
+tibble(
+  quantity = c("datasets", "children", "administrations", "trials",
+               "unique target words", "unique distractor words"),
+  value = c(
+    n_distinct(d_aoi$dataset_name),
+    n_distinct(d_aoi$subject_id),
+    n_distinct(d_aoi$administration_id),
+    n_distinct(paste(d_aoi$administration_id, d_aoi$trial_id)),
+    n_distinct(d_aoi$target_label),
+    n_distinct(d_aoi$distractor_label)
+  )
+) |> kable()
+```
+
+### Age distribution
+
+```{r desc-age}
+ages <- d_aoi |> group_by(administration_id) |> summarise(age = mean(age))
+ggplot(ages, aes(x = age)) +
+  geom_histogram(binwidth = 1) +
+  xlab("Age (months)")
+```
+
+### CDI coverage
+
+How many administrations have a usable CDI summary score?
+
+```{r desc-cdi}
+admins_in_lwl <- d_aoi |> distinct(administration_id)
+cdi_data |>
+  inner_join(admins_in_lwl) |>
+  summarise(
+    n_admins = n(),
+    has_prod = sum(!is.na(prod)),
+    has_comp = sum(!is.na(comp)),
+    has_any = sum(!is.na(prod) | !is.na(comp))
+  ) |>
+  kable()
+```
+
+### Most frequent target words
+
+```{r desc-words}
+d_aoi |>
+  distinct(administration_id, trial_id, target_label) |>
+  count(target_label, sort = TRUE) |>
+  head(25) |>
+  kable()
+```

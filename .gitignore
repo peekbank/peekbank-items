@@ -1,0 +1,15 @@
+# Large / regenerable data caches
+cached_intermediates/*.Rds
+cached_intermediates/*.rds
+cached_intermediates/*.csv
+
+# R / RStudio cruft
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+*_cache/
+*_files/
+
+# OS
+.DS_Store
