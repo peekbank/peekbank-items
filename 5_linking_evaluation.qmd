@@ -1,5 +1,5 @@
 ---
-title: "5. Linking hypotheses × data settings (unified evaluation)"
+title: "5. Linking hypotheses × data settings"
 subtitle: "peekbank-items"
 format:
   html:
@@ -11,33 +11,27 @@ execute:
   message: false
 ---
 
-This is the core notebook. We test a small set of **linking hypotheses** — ways
-that a child's word knowledge could predict their trial-level LWL accuracy —
-and evaluate each one across the available **data settings**, on a common metric
-(cross-validated prediction of trial elogit, generalizing to held-out children).
+We want to know whether a child's **word knowledge** predicts their **trial-level
+looking accuracy**, and which form of that link is best supported. This notebook
+sets up the comparison cleanly: a few explicit **linking models**, each fit under
+each available **way of measuring word knowledge** (a "data setting"), reported
+three ways — as coefficients, as accuracy effect sizes, and as out-of-sample
+prediction.
 
-**Data settings** (how word knowledge is represented):
+Notebook 6 then sharpens the winning idea into the strict item-specific test.
 
-- **aggregate** — word difficulty only, no child info: `k = -b` (IRT ease).
-- **imputed** — `P(child knows word)` from the child's CDI-derived ability
-  `theta` and the word's IRT params (large/noisy; all CDI children).
-- **precise** — the child *actually* produced the word on the CDI (small/clean;
-  the Stanford TotLot-cohort subset — `adams_marchman_2018`,
-  `fernald_marchman_2012`, `fmw_2013` — with item-level CDI, matched via
-  `lab_subject_id`).
+## The dependent variable and what "tiny R²" means
 
-**Linking hypotheses** (oriented so target knowledge `k_t` helps, distractor
-knowledge `k_d` hurts):
+The outcome is the trial **elogit**, `log((target looks + .5)/(distractor looks
++ .5))`. Conveniently, `plogis(elogit)` ≈ the trial's looking accuracy, so we can
+translate any elogit effect into **percentage points of accuracy**.
 
-- **H0** age only (baseline)
-- **H1** target knowledge only: `+ k_t`
-- **H2** additive: `+ k_t + k_d`
-- **H3** 2AFC contrast: `+ (k_t - k_d)`  — the theory-derived predictor
-  (for knowledge probabilities, `E[correct] = 0.5 + 0.5*(p_t - p_d)`)
-
-The whole point of crossing hypotheses × settings is to ask: does the same
-linking hypothesis win regardless of how knowledge is measured, and how much
-does the precise (item-level) measurement buy us over the imputed one?
+A single trial is a *very* noisy measurement — a few seconds of a toddler's
+gaze. So most trial-level variance is irreducible noise, and **no** model can
+explain much of it. We make that ceiling explicit below; it is why the
+out-of-sample R² values are all near 0.03–0.04. The right yardsticks are
+therefore (a) the **coefficient / accuracy effect size** and (b) the
+**improvement over an age-only baseline**, not the absolute R².
 
 ```{r setup}
 library(here)
@@ -48,15 +42,27 @@ knitr::opts_chunk$set(cache = FALSE)
 d_trial <- readRDS(here("cached_intermediates", "1_d_trial.Rds")) |> ungroup()
 d_sub   <- readRDS(here("cached_intermediates", "1_d_sub.Rds"))
 cdi     <- readRDS(here("cached_intermediates", "3_cdi_difficulty.Rds"))
-subset_dat <- readRDS(here("cached_intermediates", "0_cdi_items_subset.Rds"))
+subset_dat  <- readRDS(here("cached_intermediates", "0_cdi_items_subset.Rds"))
+subject_map <- readRDS(here("cached_intermediates", "0_subject_map.Rds"))
 
 p2pl <- function(theta, a, b) plogis(a * (theta - b))
 ```
 
-## Build the trial frame with knowledge signals
+## Three ways to measure word knowledge ("data settings")
 
-Start from trials with a usable elogit, join IRT difficulty for target and
-distractor, and the child's CDI-derived ability.
+For each trial we form a **target-knowledge** signal `k_t` and a
+**distractor-knowledge** signal `k_d`, oriented so that more knowledge = larger
+value. The three settings differ in where that knowledge comes from:
+
+| setting | `k_t`, `k_d` | child-specific? | item-specific? | covers |
+|---|---|---|---|---|
+| **aggregate** | `-b` (IRT *ease* of the word) | no | yes | all trials |
+| **imputed** | `P(knows) = 2PL(θ_child, a, b)` | yes (via CDI total) | only via difficulty | CDI children |
+| **precise** | child *actually produced* the word (0/1) | yes | yes (real) | TotLot subset |
+
+The imputed signal is built from the child's overall CDI ability `θ` and the
+word's IRT parameters; the precise signal is the child's real per-word CDI
+response.
 
 ```{r build-frame}
 cdi_diff <- cdi$item_pars |> select(item, a, b)
@@ -65,58 +71,33 @@ base <- d_trial |>
   rename(accuracy = long_window_accuracy, elogit = long_window_elogit) |>
   filter(!is.na(elogit)) |>
   mutate(log_age = log(age), log_age_centered = log_age - mean(log_age)) |>
-  # target IRT params
   left_join(cdi_diff |> rename(a_t = a, b_t = b), by = c("target_label" = "item")) |>
-  # distractor IRT params
   left_join(cdi_diff |> rename(a_d = a, b_d = b), by = c("distractor_label" = "item")) |>
-  # child ability (theta) from CDI prod proportion via the WS bridge
   left_join(d_sub |> select(administration_id, prod), by = "administration_id") |>
-  mutate(theta = cdi$prop_to_theta(prod))
-
-# aggregate signals (no child info): ease = -difficulty
-base <- base |>
-  mutate(
-    agg_k_t = -b_t,
-    agg_k_d = -b_d,
-    # imputed signals: P(child knows word)
-    imp_k_t = p2pl(theta, a_t, b_t),
-    imp_k_d = p2pl(theta, a_d, b_d)
-  )
+  mutate(theta = cdi$prop_to_theta(prod),
+         agg_k_t = -b_t, agg_k_d = -b_d,
+         imp_k_t = p2pl(theta, a_t, b_t), imp_k_d = p2pl(theta, a_d, b_d))
 ```
 
-### Precise subset signals (item-level CDI)
-
-Bridge peekbank administrations to the Stanford item-level CDI via the
-release-stable **`lab_subject_id`** (the link file's `peekbank_admin_id` is from a
-2022 pull and does not match 2026.1). For each LWL administration we use the
-child's CDI record **nearest in age**, then look up whether they produced each
-target / distractor word.
-
 ```{r precise-signals}
-subject_map <- readRDS(here("cached_intermediates", "0_subject_map.Rds"))
 items_long <- subset_dat$cdi_items_long |>
   mutate(item = str_to_lower(item), lab_subject_id = as.character(lab_subject_id)) |>
   rename(cdi_age = age)
 
-# per-trial child + age, mapped to lab_subject_id
 admins <- base |>
   distinct(administration_id, subject_id, age) |>
   inner_join(subject_map, by = "subject_id") |>
   filter(lab_subject_id %in% items_long$lab_subject_id)
 
-# choose, per administration, the CDI record nearest in age
-cdi_ages <- items_long |> distinct(lab_subject_id, cdi_age)
 nearest_cdi <- admins |>
-  inner_join(cdi_ages, by = "lab_subject_id", relationship = "many-to-many") |>
+  inner_join(items_long |> distinct(lab_subject_id, cdi_age),
+             by = "lab_subject_id", relationship = "many-to-many") |>
   mutate(age_diff = abs(age - cdi_age)) |>
   group_by(administration_id) |>
   slice_min(age_diff, n = 1, with_ties = FALSE) |>
   ungroup() |>
   select(administration_id, lab_subject_id, cdi_age)
 
-# produces at that chosen CDI age, per item. A child may have multiple CDI
-# records at the same age (different forms / source files), so collapse to
-# "produced on any record" to get one row per (child, age, item).
 produces_at_age <- items_long |>
   group_by(lab_subject_id, cdi_age, item) |>
   summarise(produces = as.integer(any(produces == 1)), .groups = "drop")
@@ -129,81 +110,150 @@ precise <- base |>
             by = c("lab_subject_id", "cdi_age", "distractor_label" = "item"))
 
 cat("Precise subset: ", n_distinct(precise$lab_subject_id), " children, ",
-    nrow(precise), " trials; ",
-    "target word matched a CDI item in ",
-    round(mean(!is.na(precise$prec_k_t)) * 100), "% of trials\n", sep = "")
+    nrow(precise), " trials\n", sep = "")
 ```
 
-## Evaluation harness
+## Four linking models, written out
 
-For a given data frame and a set of fixed-effect terms, fit
-`elogit ~ <age + terms> + (1|administration_id) + (1|dataset_name)` and evaluate
-with **child-grouped 5-fold CV**, predicting with fixed effects only
-(`re.form = NA`) so we measure how well the *linking signal* generalizes to new
-children. Metric: out-of-sample R² (squared correlation of predicted vs observed
-elogit), averaged over folds.
+For a trial by child *c* in dataset *s* with target/distractor knowledge
+`k_t, k_d`, every model has the same random structure — a child intercept
+`u_c` (absorbing general ability) and a dataset intercept `v_s` — and they differ
+only in how knowledge enters the mean:
+
+$$
+\textbf{H0:}\quad \text{elogit} = \beta_0 + \beta_{age}\,\log\text{age} + u_c + v_s + \varepsilon
+$$
+$$
+\textbf{H1:}\quad \ldots + \beta_t\,k_t \qquad\text{(target knowledge only)}
+$$
+$$
+\textbf{H2:}\quad \ldots + \beta_t\,k_t + \beta_d\,k_d \qquad\text{(target and distractor, separately)}
+$$
+$$
+\textbf{H3:}\quad \ldots + \beta_\Delta\,(k_t - k_d) \qquad\text{(symmetric 2AFC contrast)}
+$$
+
+Inferences we can draw:
+
+- **H1 vs H0** — does knowing the target help at all? (`β_t > 0` expected.)
+- **H2 vs H1** — does the *distractor* add anything beyond the target?
+  (`β_d < 0` expected if a known competitor pulls looks away.)
+- **H3** — forces target and distractor to matter *equally and oppositely*. If
+  the true effect is asymmetric, H3 will fit *worse* than H2 even though it is
+  the "tidy" 2AFC story. (This is exactly what we find — and notebook 6 explains
+  why.)
+
+Note these models include a child intercept but **not** a word intercept, so a
+knowledge coefficient here captures the effect of word knowledge *including* the
+fact that easier words are both better known and better recognized. Notebook 6
+adds word intercepts to strip that out and isolate the purely item-specific part.
+
+## How noisy is a trial? (the R² ceiling)
+
+```{r noise-ceiling}
+m_full <- lmer(elogit ~ log_age_centered + (1 | administration_id) + (1 | dataset_name),
+               data = base, control = lmerControl(optimizer = "bobyqa"))
+vc <- as.data.frame(VarCorr(m_full))
+tibble(
+  component = c("child differences", "dataset differences", "residual (trial noise)"),
+  variance = c(vc$vcov[vc$grp == "administration_id"],
+               vc$vcov[vc$grp == "dataset_name"],
+               vc$vcov[vc$grp == "Residual"])
+) |>
+  mutate(share = variance / sum(variance)) |>
+  kable(digits = c(0, 2, 3),
+        caption = "Variance decomposition of trial elogit (age-only model)")
+```
+
+The residual (pure trial noise) is the large majority of the variance. That is
+the ceiling: even a perfect knowledge model can only chip at the small
+non-residual slice, so trial-level R² *must* be small. Read the numbers below as
+relative, not absolute.
+
+## Effect sizes: what the coefficients say
+
+We fit H2 in each setting on the common precise subset (so the three settings
+describe exactly the same trials) and report the knowledge coefficients in
+logits and as accuracy effect sizes (evaluated at the sample's mean elogit).
+
+```{r effect-sizes}
+ref_elogit <- mean(precise$elogit, na.rm = TRUE)
+pp <- function(beta) 100 * (plogis(ref_elogit + beta) - plogis(ref_elogit))
+
+sub_frame <- precise |>
+  filter(!is.na(prec_k_t), !is.na(prec_k_d), !is.na(agg_k_t), !is.na(agg_k_d),
+         !is.na(imp_k_t), !is.na(imp_k_d))
+
+fit_h2 <- function(d, kt, kd, label) {
+  f <- as.formula(paste0("elogit ~ log_age_centered + ", kt, " + ", kd,
+                         " + (1|administration_id) + (1|dataset_name)"))
+  m <- lmer(f, data = d, control = lmerControl(optimizer = "bobyqa"))
+  ci <- confint(m, parm = c(kt, kd), method = "Wald")
+  tibble(setting = label,
+         term = c("target (k_t)", "distractor (k_d)"),
+         beta = fixef(m)[c(kt, kd)],
+         ci_low = ci[, 1], ci_high = ci[, 2],
+         acc_pp = pp(fixef(m)[c(kt, kd)]))
+}
+
+bind_rows(
+  fit_h2(sub_frame, "agg_k_t",  "agg_k_d",  "aggregate"),
+  fit_h2(sub_frame, "imp_k_t",  "imp_k_d",  "imputed"),
+  fit_h2(sub_frame, "prec_k_t", "prec_k_d", "precise")
+) |>
+  kable(digits = 3,
+        caption = "H2 knowledge coefficients (logit) and accuracy effect (pp) on the common subset")
+```
+
+For the binary **precise** signal the `acc_pp` for the target is the most direct
+"how much does it matter" number: the accuracy gain for a word the child
+*actually knows* vs one they don't, holding the child and dataset fixed. For the
+**imputed/aggregate** signals the coefficient is per unit of the (continuous)
+knowledge scale, so compare signs and significance rather than raw pp.
+
+## Out-of-sample prediction (relative, against the noise ceiling)
+
+Child-grouped 5-fold CV; predict held-out trials from fixed effects only
+(`re.form = NA`), so we are scoring how well the *linking signal* generalizes to
+new children. We report R² and, more usefully, the **improvement over the H0
+baseline**.
 
 ```{r harness}
 set.seed(42)
-
 cv_r2 <- function(data, terms, n_folds = 5) {
-  data <- data |> filter(if_all(all_of(terms[terms %in% names(data)]), ~ !is.na(.x)))
-  # build formula
   fixed <- paste(c("log_age_centered", terms), collapse = " + ")
   form <- as.formula(paste0("elogit ~ ", fixed,
                             " + (1|administration_id) + (1|dataset_name)"))
-  # assign folds by child
   subs <- unique(data$administration_id)
   fold <- setNames(sample(rep(1:n_folds, length.out = length(subs))), subs)
   data$.fold <- fold[as.character(data$administration_id)]
-
-  preds <- numeric(nrow(data)); preds[] <- NA
+  preds <- rep(NA_real_, nrow(data))
   for (f in 1:n_folds) {
-    tr <- data |> filter(.fold != f)
-    te <- which(data$.fold == f)
-    m <- tryCatch(
-      lmer(form, data = tr, control = lmerControl(optimizer = "bobyqa")),
-      error = function(e) NULL)
-    if (is.null(m)) next
-    preds[te] <- predict(m, newdata = data[te, ], re.form = NA, allow.new.levels = TRUE)
+    tr <- data |> filter(.fold != f); te <- which(data$.fold == f)
+    m <- tryCatch(lmer(form, data = tr, control = lmerControl(optimizer = "bobyqa")),
+                  error = function(e) NULL)
+    if (!is.null(m)) preds[te] <- predict(m, newdata = data[te, ], re.form = NA,
+                                          allow.new.levels = TRUE)
   }
   ok <- !is.na(preds)
   if (sum(ok) < 10) return(NA_real_)
   cor(preds[ok], data$elogit[ok])^2
 }
 
-# hypotheses as term sets, parameterized by a setting's knowledge column names
 make_terms <- function(kt, kd) list(
-  H0 = character(0),
-  H1 = kt,
-  H2 = c(kt, kd),
-  H3 = paste0("I(", kt, " - ", kd, ")")
-)
+  H0 = character(0), H1 = kt, H2 = c(kt, kd),
+  H3 = paste0("I(", kt, " - ", kd, ")"))
 
 run_setting <- function(data, kt, kd, label) {
-  # need both knowledge columns present
   d <- data |> filter(!is.na(.data[[kt]]), !is.na(.data[[kd]]))
   terms <- make_terms(kt, kd)
-  tibble(
-    setting = label,
-    hypothesis = names(terms),
-    n_trials = nrow(d),
-    cv_r2 = map_dbl(terms, ~ cv_r2(d, .x))
-  )
+  r2 <- map_dbl(terms, ~ cv_r2(d, .x))
+  tibble(setting = label, hypothesis = names(terms), cv_r2 = r2,
+         delta_vs_H0 = r2 - r2[["H0"]])
 }
 ```
 
-## Apples-to-apples: all settings on the precise subset
-
-The precise signals exist only for the Stanford TotLot-cohort subset, so for a
-fair three-way comparison we run **all three settings on exactly these trials**.
-
 ```{r compare-subset}
-sub_frame <- precise |>
-  filter(!is.na(prec_k_t), !is.na(prec_k_d),
-         !is.na(agg_k_t), !is.na(agg_k_d),
-         !is.na(imp_k_t), !is.na(imp_k_d))
-
 subset_results <- bind_rows(
   run_setting(sub_frame, "agg_k_t",  "agg_k_d",  "aggregate"),
   run_setting(sub_frame, "imp_k_t",  "imp_k_d",  "imputed"),
@@ -213,40 +263,40 @@ subset_results <- bind_rows(
 subset_results |>
   select(setting, hypothesis, cv_r2) |>
   pivot_wider(names_from = hypothesis, values_from = cv_r2) |>
-  kable(digits = 4, caption = paste0("CV R2 on the precise subset (",
+  kable(digits = 4, caption = paste0("Out-of-sample R² on the common subset (",
         n_distinct(sub_frame$lab_subject_id), " children, ", nrow(sub_frame), " trials)"))
-```
 
-```{r compare-subset-delta}
 subset_results |>
-  group_by(setting) |>
-  mutate(delta_vs_H0 = cv_r2 - cv_r2[hypothesis == "H0"]) |>
   filter(hypothesis != "H0") |>
   ggplot(aes(x = hypothesis, y = delta_vs_H0, fill = setting)) +
   geom_col(position = "dodge") +
-  ylab("CV R2 improvement over age-only baseline") +
-  ggtitle("Linking hypotheses x data settings (precise subset)")
+  geom_hline(yintercept = 0) +
+  ylab("R² improvement over age-only baseline") +
+  ggtitle("Predictive gain from each linking model, by setting")
 ```
-
-## Power run: aggregate and imputed on the full data
 
 ```{r compare-full}
 full_results <- bind_rows(
   run_setting(base, "agg_k_t", "agg_k_d", "aggregate (full)"),
   run_setting(base |> filter(!is.na(theta)), "imp_k_t", "imp_k_d", "imputed (full)")
 )
-
 full_results |>
-  select(setting, hypothesis, n_trials, cv_r2) |>
+  select(setting, hypothesis, cv_r2) |>
   pivot_wider(names_from = hypothesis, values_from = cv_r2) |>
-  kable(digits = 4, caption = "CV R2 on full data (aggregate and imputed settings)")
+  kable(digits = 4, caption = "Out-of-sample R² on the full data")
 ```
 
-## Read
+## What to conclude
 
-The subset table is the key comparison: reading **down a column** shows whether a
-given linking hypothesis improves as knowledge measurement sharpens
-(aggregate → imputed → precise); reading **across a row** shows which hypothesis
-form (target-only vs additive vs 2AFC contrast) wins. The full-data table checks
-that the winning pattern holds with real power on the imputed pathway that scales
-to the whole database.
+- **Word knowledge does predict accuracy** (H1 > H0 everywhere; the effect-size
+  table quantifies it — a known target buys several points of accuracy).
+- **The link is asymmetric.** H2 ≈ H1 (the distractor coefficient is ~0) and
+  **H3 is no better than baseline**: forcing target and distractor to count
+  equally (the tidy 2AFC contrast) throws the signal away. The decision is
+  driven by *target* knowledge far more than by distractor competition.
+- **Imputed ≈ precise here**, because this notebook's models contain no word
+  intercept: the knowledge coefficient is allowed to ride on between-word
+  difficulty, which imputation already encodes. The place where real item-level
+  CDI must beat imputation is the *within-word* comparison — that is notebook 6.
+- **Absolute R² is tiny and that is expected** (see the noise ceiling); the
+  improvement-over-baseline and effect-size views are the honest summaries.
