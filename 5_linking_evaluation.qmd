@@ -22,7 +22,9 @@ and evaluate each one across the available **data settings**, on a common metric
 - **imputed** — `P(child knows word)` from the child's CDI-derived ability
   `theta` and the word's IRT params (large/noisy; all CDI children).
 - **precise** — the child *actually* produced the word on the CDI (small/clean;
-  the `adams_marchman_2018` subset with item-level CDI).
+  the Stanford TotLot-cohort subset — `adams_marchman_2018`,
+  `fernald_marchman_2012`, `fmw_2013` — with item-level CDI, matched via
+  `lab_subject_id`).
 
 **Linking hypotheses** (oriented so target knowledge `k_t` helps, distractor
 knowledge `k_d` hurts):
@@ -41,6 +43,7 @@ does the precise (item-level) measurement buy us over the imputed one?
 library(here)
 library(lme4)
 source(here("helper", "common.R"))
+knitr::opts_chunk$set(cache = FALSE)
 
 d_trial <- readRDS(here("cached_intermediates", "1_d_trial.Rds")) |> ungroup()
 d_sub   <- readRDS(here("cached_intermediates", "1_d_sub.Rds"))
@@ -83,35 +86,49 @@ base <- base |>
 
 ### Precise subset signals (item-level CDI)
 
-Bridge peekbank administrations to the Stanford item-level CDI via
-`peekbank_admin_id`, then look up whether the child produced each target /
-distractor word.
+Bridge peekbank administrations to the Stanford item-level CDI via the
+release-stable **`lab_subject_id`** (the link file's `peekbank_admin_id` is from a
+2022 pull and does not match 2026.1). For each LWL administration we use the
+child's CDI record **nearest in age**, then look up whether they produced each
+target / distractor word.
 
 ```{r precise-signals}
-linked <- subset_dat$linked
+subject_map <- readRDS(here("cached_intermediates", "0_subject_map.Rds"))
 items_long <- subset_dat$cdi_items_long |>
-  mutate(item = str_to_lower(item))
+  mutate(item = str_to_lower(item), lab_subject_id = as.character(lab_subject_id)) |>
+  rename(cdi_age = age)
 
-# produces lookup: lab_subject_id x item -> produced? (use the CDI nearest in age;
-# here we take 'ever produced' across the child's CDI records as a robust proxy)
-produces_lookup <- items_long |>
-  group_by(lab_subject_id, item) |>
-  summarise(produces = as.integer(any(produces == 1)), .groups = "drop")
+# per-trial child + age, mapped to lab_subject_id
+admins <- base |>
+  distinct(administration_id, subject_id, age) |>
+  inner_join(subject_map, by = "subject_id") |>
+  filter(lab_subject_id %in% items_long$lab_subject_id)
 
-# map peekbank administration_id -> lab_subject_id
-admin_to_sub <- linked |>
-  distinct(peekbank_admin_id, lab_subject_id)
+# choose, per administration, the CDI record nearest in age
+cdi_ages <- items_long |> distinct(lab_subject_id, cdi_age)
+nearest_cdi <- admins |>
+  inner_join(cdi_ages, by = "lab_subject_id", relationship = "many-to-many") |>
+  mutate(age_diff = abs(age - cdi_age)) |>
+  group_by(administration_id) |>
+  slice_min(age_diff, n = 1, with_ties = FALSE) |>
+  ungroup() |>
+  select(administration_id, lab_subject_id, cdi_age)
+
+# produces at that chosen CDI age, per item
+produces_at_age <- items_long |>
+  distinct(lab_subject_id, cdi_age, item, produces)
 
 precise <- base |>
-  inner_join(admin_to_sub, by = c("administration_id" = "peekbank_admin_id")) |>
-  left_join(produces_lookup |> rename(prec_k_t = produces),
-            by = c("lab_subject_id", "target_label" = "item")) |>
-  left_join(produces_lookup |> rename(prec_k_d = produces),
-            by = c("lab_subject_id", "distractor_label" = "item"))
+  inner_join(nearest_cdi, by = "administration_id") |>
+  left_join(produces_at_age |> rename(prec_k_t = produces),
+            by = c("lab_subject_id", "cdi_age", "target_label" = "item")) |>
+  left_join(produces_at_age |> rename(prec_k_d = produces),
+            by = c("lab_subject_id", "cdi_age", "distractor_label" = "item"))
 
 cat("Precise subset: ", n_distinct(precise$lab_subject_id), " children, ",
     nrow(precise), " trials; ",
-    "target word matched CDI item in ", round(mean(!is.na(precise$prec_k_t)) * 100), "% of trials\n", sep = "")
+    "target word matched a CDI item in ",
+    round(mean(!is.na(precise$prec_k_t)) * 100), "% of trials\n", sep = "")
 ```
 
 ## Evaluation harness
@@ -175,7 +192,7 @@ run_setting <- function(data, kt, kd, label) {
 
 ## Apples-to-apples: all settings on the precise subset
 
-The precise signals exist only for the `adams_marchman_2018` subset, so for a
+The precise signals exist only for the Stanford TotLot-cohort subset, so for a
 fair three-way comparison we run **all three settings on exactly these trials**.
 
 ```{r compare-subset}

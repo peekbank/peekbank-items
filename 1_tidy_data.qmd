@@ -18,6 +18,7 @@ from the cached AOI data. Adapted from `peekbank-development/1_tidy_data.qmd`.
 library(here)
 source(here("helper", "common.R"))
 source(here("helper", "rt_helper.R"))
+knitr::opts_chunk$set(cache = FALSE)
 
 ACC_MIN_TRIAL_CUTOFF <- 4
 RT_MIN_TRIAL_CUTOFF <- 2

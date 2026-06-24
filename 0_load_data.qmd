@@ -26,6 +26,7 @@ library(dtplyr)
 library(fuzzyjoin)
 source(here("helper", "common.R"))
 source(here("helper", "rt_helper.R"))
+knitr::opts_chunk$set(cache = FALSE)  # we cache via saveRDS; knitr cache chokes on long vectors
 
 DB_VERSION <- "2026.1"
 
@@ -224,8 +225,18 @@ For the linking analyses we have two pathways:
   from `standard_model_2`. Here we know whether each child produced each word
   (notebook 6).
 
-The precise subset links peekbank's `adams_marchman_2018` administrations to
-Stanford lab CDI records via `peekbank_admin_id` / `lab_subject_id`.
+The precise subset links peekbank administrations to Stanford lab CDI records.
+Note: the `peekbank_admin_id` in the standard_model_2 link file was generated
+from a **2022** pull and does not match 2026.1 admin IDs, so we bridge on the
+release-stable **`lab_subject_id`** instead (saved here as `0_subject_map`).
+
+```{r subject-map}
+# subject_id <-> lab_subject_id, the stable bridge to external item-level CDI
+subject_map <- all_subjects |>
+  distinct(subject_id, lab_subject_id) |>
+  mutate(lab_subject_id = as.character(lab_subject_id))
+saveRDS(subject_map, here("cached_intermediates", "0_subject_map.Rds"))
+```
 
 ```{r cdi-items}
 cdi_items_long <- read_csv(file.path(SM2_PEEKBANK, "stanford_cdi_items_long.csv"))
@@ -235,12 +246,21 @@ item_key <- read_csv(file.path(SM2_PEEKBANK, "cdi_master_item_key.csv"))
 saveRDS(list(cdi_items_long = cdi_items_long, linked = linked, item_key = item_key),
         file = here("cached_intermediates", "0_cdi_items_subset.Rds"))
 
+# actual overlap via the stable lab_subject_id bridge
+cdi_subs <- unique(as.character(cdi_items_long$lab_subject_id))
+lwl_subs_with_cdi <- subject_map |>
+  filter(lab_subject_id %in% cdi_subs) |>
+  semi_join(d_aoi, by = "subject_id")
+
 tibble(
-  quantity = c("LWL admins linked", "unique children", "datasets",
-               "children w/ item-level CDI", "CDI items in key"),
-  value = c(nrow(linked), n_distinct(linked$lab_subject_id),
-            n_distinct(linked$dataset_name),
-            length(intersect(linked$lab_subject_id, cdi_items_long$lab_subject_id)),
+  quantity = c("children w/ item-level CDI (in standard_model_2)",
+               "LWL children matched via lab_subject_id",
+               "their LWL administrations",
+               "CDI items in key"),
+  value = c(length(cdi_subs),
+            n_distinct(lwl_subs_with_cdi$subject_id),
+            d_aoi |> semi_join(lwl_subs_with_cdi, by = "subject_id") |>
+              distinct(administration_id) |> nrow(),
             n_distinct(item_key$item))
 ) |> kable()
 ```

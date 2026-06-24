@@ -26,6 +26,7 @@ trial-level child×item comparison across settings is in notebook 5.
 library(here)
 library(ggrepel)
 source(here("helper", "common.R"))
+knitr::opts_chunk$set(cache = FALSE)
 
 lwl <- readRDS(here("cached_intermediates", "2_lwl_item.Rds"))
 cdi <- readRDS(here("cached_intermediates", "3_cdi_difficulty.Rds"))
