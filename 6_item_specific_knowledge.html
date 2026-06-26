@@ -2349,6 +2349,7 @@ window.Quarto = {
   <li><a href="#build-the-precise-frame" id="toc-build-the-precise-frame" class="nav-link active" data-scroll-target="#build-the-precise-frame">Build the precise frame</a></li>
   <li><a href="#a.-is-there-item-specific-variance-to-find" id="toc-a.-is-there-item-specific-variance-to-find" class="nav-link" data-scroll-target="#a.-is-there-item-specific-variance-to-find">A. Is there item-specific variance to find?</a></li>
   <li><a href="#b.-cross-sectional-test-spelled-out" id="toc-b.-cross-sectional-test-spelled-out" class="nav-link" data-scroll-target="#b.-cross-sectional-test-spelled-out">B. Cross-sectional test, spelled out</a></li>
+  <li><a href="#b1.-the-distractors-two-roles-salience-vs.-knowledge" id="toc-b1.-the-distractors-two-roles-salience-vs.-knowledge" class="nav-link" data-scroll-target="#b1.-the-distractors-two-roles-salience-vs.-knowledge">B1. The distractor’s two roles: salience vs. knowledge</a></li>
   <li><a href="#b2.-the-effect-in-accuracy-age-space" id="toc-b2.-the-effect-in-accuracy-age-space" class="nav-link" data-scroll-target="#b2.-the-effect-in-accuracy-age-space">B2. The effect in accuracy × age space</a></li>
   <li><a href="#c.-longitudinal-test-does-learning-a-word-raise-accuracy-on-it" id="toc-c.-longitudinal-test-does-learning-a-word-raise-accuracy-on-it" class="nav-link" data-scroll-target="#c.-longitudinal-test-does-learning-a-word-raise-accuracy-on-it">C. Longitudinal test: does learning a word raise accuracy on it?</a>
   <ul class="collapse">
@@ -2665,35 +2666,102 @@ window.Quarto = {
 </div>
 <p><strong>Reading the scale.</strong> <code>elogit = log(target looks / distractor looks)</code>, and <code>plogis(elogit)</code> is the proportion of looks to the target — i.e. looking <strong>accuracy</strong> on a 0–1 scale, where <strong>0.5 is chance</strong>. Because the logistic curve is steepest at 0.5, a fixed elogit effect is a <em>bigger</em> accuracy gain near chance (harder words, younger kids) and a <em>smaller</em> one near ceiling. The <code>accuracy_pp</code> column above evaluates the effect at the sample’s mean accuracy (≈ 77%); the next section shows how it plays out across the whole age range.</p>
 </section>
+<section id="b1.-the-distractors-two-roles-salience-vs.-knowledge" class="level2">
+<h2 class="anchored" data-anchor-id="b1.-the-distractors-two-roles-salience-vs.-knowledge">B1. The distractor’s two roles: salience vs. knowledge</h2>
+<p>The target/distractor asymmetry above can look puzzling next to notebook 4, where “controlling for the distractor” mattered a great deal. The resolution is that a word plays <strong>two separate roles</strong>, and <code>m2</code> estimates both at once:</p>
+<ul>
+<li>its <strong>perceptual identity / salience</strong> — how grabby it is as a competitor, <em>regardless of whether the child knows it</em> — captured by the word <strong>random intercept</strong>;</li>
+<li>the child’s <strong>knowledge</strong> of it — captured by the <code>produces</code> <strong>fixed effect</strong>.</li>
+</ul>
+<div class="cell">
+<details class="code-fold">
+<summary>Code</summary>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb7"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>vc <span class="ot">&lt;-</span> <span class="fu">as.data.frame</span>(<span class="fu">VarCorr</span>(m2))</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>ci2 <span class="ot">&lt;-</span> <span class="fu">confint</span>(m2, <span class="at">parm =</span> <span class="fu">c</span>(<span class="st">&quot;prec_k_t&quot;</span>, <span class="st">&quot;prec_k_d&quot;</span>), <span class="at">method =</span> <span class="st">&quot;Wald&quot;</span>)</span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="fu">tibble</span>(</span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">word =</span> <span class="fu">c</span>(<span class="st">&quot;target&quot;</span>, <span class="st">&quot;distractor&quot;</span>),</span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">identity_salience_sd =</span> <span class="fu">c</span>(vc<span class="sc">$</span>sdcor[vc<span class="sc">$</span>grp <span class="sc">==</span> <span class="st">&quot;target_label&quot;</span>],</span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a>                           vc<span class="sc">$</span>sdcor[vc<span class="sc">$</span>grp <span class="sc">==</span> <span class="st">&quot;distractor_label&quot;</span>]),</span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">knowledge_effect =</span> <span class="fu">fixef</span>(m2)[<span class="fu">c</span>(<span class="st">&quot;prec_k_t&quot;</span>, <span class="st">&quot;prec_k_d&quot;</span>)],</span>
+<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">knowledge_ci =</span> <span class="fu">sprintf</span>(<span class="st">&quot;[%.2f, %.2f]&quot;</span>, ci2[<span class="fu">c</span>(<span class="st">&quot;prec_k_t&quot;</span>,<span class="st">&quot;prec_k_d&quot;</span>), <span class="dv">1</span>],</span>
+<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a>                                          ci2[<span class="fu">c</span>(<span class="st">&quot;prec_k_t&quot;</span>,<span class="st">&quot;prec_k_d&quot;</span>), <span class="dv">2</span>])</span>
+<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a>) <span class="sc">|&gt;</span></span>
+<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">kable</span>(<span class="at">digits =</span> <span class="dv">2</span>,</span>
+<span id="cb7-12"><a href="#cb7-12" aria-hidden="true" tabindex="-1"></a>        <span class="at">col.names =</span> <span class="fu">c</span>(<span class="st">&quot;word&quot;</span>, <span class="st">&quot;identity / salience (random-intercept SD, logit)&quot;</span>,</span>
+<span id="cb7-13"><a href="#cb7-13" aria-hidden="true" tabindex="-1"></a>                      <span class="st">&quot;knowledge effect (logit)&quot;</span>, <span class="st">&quot;95% CI&quot;</span>),</span>
+<span id="cb7-14"><a href="#cb7-14" aria-hidden="true" tabindex="-1"></a>        <span class="at">caption =</span> <span class="st">&quot;Each word matters two ways: as a perceptual object, and as something the child does or doesn&#39;t know.&quot;</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
+<div class="cell-output-display">
+<table class="caption-top table table-sm table-striped small">
+<caption>Each word matters two ways: as a perceptual object, and as something the child does or doesn’t know.</caption>
+<colgroup>
+<col style="width: 11%">
+<col style="width: 49%">
+<col style="width: 25%">
+<col style="width: 14%">
+</colgroup>
+<thead>
+<tr class="header">
+<th style="text-align: left;">word</th>
+<th style="text-align: right;">identity / salience (random-intercept SD, logit)</th>
+<th style="text-align: right;">knowledge effect (logit)</th>
+<th style="text-align: left;">95% CI</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;">target</td>
+<td style="text-align: right;">0.68</td>
+<td style="text-align: right;">0.28</td>
+<td style="text-align: left;">[0.19, 0.36]</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">distractor</td>
+<td style="text-align: right;">0.52</td>
+<td style="text-align: right;">-0.01</td>
+<td style="text-align: left;">[-0.10, 0.07]</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<p>The two roles <strong>completely dissociate for the distractor</strong>. Its <em>identity</em> carries nearly as much variance as the target’s (the random-intercept SDs are comparable) — so <em>which</em> word is the competitor matters a lot, perceptually. But its <em>knowledge</em> effect is ~0: whether the child actually knows the competitor word makes no difference. The target is the opposite of null on the knowledge side.</p>
+<p>This single picture reconciles the notebooks:</p>
+<ul>
+<li><strong>Notebook 4’s gains</strong> came from partialling out distractor <strong>identity</strong> and <strong>animacy</strong> — perceptual structure that is <em>not</em> word knowledge. Removing it cleans the LWL measure, which is a <strong>measurement</strong> win.</li>
+<li><strong>Notebooks 5–6’s null distractor / null H3 contrast</strong> are about distractor <strong>knowledge</strong>, which genuinely plays no role. The 2AFC decision is <strong>asymmetric</strong>: “do I recognise the <em>target</em>?”, not a knowledge race between target and competitor.</li>
+</ul>
+<p>So salience and knowledge are different axes. Salience must be removed to <em>see</em> the signal; the signal that remains is real <strong>target</strong>-word knowledge (confirmed causally by the longitudinal test in Section C) — modest, but not an artifact of the partialling.</p>
+</section>
 <section id="b2.-the-effect-in-accuracy-age-space" class="level2">
 <h2 class="anchored" data-anchor-id="b2.-the-effect-in-accuracy-age-space">B2. The effect in accuracy × age space</h2>
 <p>Abstract coefficients are hard to feel. Here is looking <strong>accuracy by age</strong>, split by whether the child produces the target word. Points are binned empirical means (size = #trials); lines are the fitted curves from the within-child/word model <code>m1</code> (Section B), back-transformed from elogit to accuracy.</p>
 <div class="cell">
 <details class="code-fold">
 <summary>Code</summary>
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb7"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>center_const <span class="ot">&lt;-</span> <span class="fu">mean</span>(precise<span class="sc">$</span>log_age <span class="sc">-</span> precise<span class="sc">$</span>log_age_centered)  <span class="co"># recover age centering</span></span>
-<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>age_grid <span class="ot">&lt;-</span> <span class="fu">seq</span>(<span class="dv">14</span>, <span class="dv">38</span>, <span class="at">by =</span> <span class="dv">1</span>)</span>
-<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>pred <span class="ot">&lt;-</span> <span class="fu">expand_grid</span>(<span class="at">age =</span> age_grid, <span class="at">prec_k_t =</span> <span class="fu">c</span>(<span class="dv">0</span>, <span class="dv">1</span>)) <span class="sc">|&gt;</span></span>
-<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">log_age_centered =</span> <span class="fu">log</span>(age) <span class="sc">-</span> center_const)</span>
-<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a>pred<span class="sc">$</span>elogit <span class="ot">&lt;-</span> <span class="fu">predict</span>(m1, <span class="at">newdata =</span> pred, <span class="at">re.form =</span> <span class="cn">NA</span>)  <span class="co"># m1 defined in Section B</span></span>
-<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a>pred <span class="ot">&lt;-</span> pred <span class="sc">|&gt;</span> <span class="fu">mutate</span>(<span class="at">accuracy =</span> <span class="fu">acc</span>(elogit),</span>
-<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a>                       <span class="at">knows =</span> <span class="fu">ifelse</span>(prec_k_t <span class="sc">==</span> <span class="dv">1</span>, <span class="st">&quot;knows target&quot;</span>, <span class="st">&quot;does not know&quot;</span>))</span>
-<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a>emp <span class="ot">&lt;-</span> precise <span class="sc">|&gt;</span></span>
-<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">age_bin =</span> <span class="fu">round</span>(age <span class="sc">/</span> <span class="dv">2</span>) <span class="sc">*</span> <span class="dv">2</span>) <span class="sc">|&gt;</span></span>
-<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">group_by</span>(age_bin, prec_k_t) <span class="sc">|&gt;</span></span>
-<span id="cb7-12"><a href="#cb7-12" aria-hidden="true" tabindex="-1"></a>  <span class="fu">summarise</span>(<span class="at">accuracy =</span> <span class="fu">mean</span>(accuracy), <span class="at">n =</span> <span class="fu">n</span>(), <span class="at">.groups =</span> <span class="st">&quot;drop&quot;</span>) <span class="sc">|&gt;</span></span>
-<span id="cb7-13"><a href="#cb7-13" aria-hidden="true" tabindex="-1"></a>  <span class="fu">filter</span>(n <span class="sc">&gt;=</span> <span class="dv">30</span>) <span class="sc">|&gt;</span></span>
-<span id="cb7-14"><a href="#cb7-14" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">knows =</span> <span class="fu">ifelse</span>(prec_k_t <span class="sc">==</span> <span class="dv">1</span>, <span class="st">&quot;knows target&quot;</span>, <span class="st">&quot;does not know&quot;</span>))</span>
-<span id="cb7-15"><a href="#cb7-15" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-16"><a href="#cb7-16" aria-hidden="true" tabindex="-1"></a><span class="fu">ggplot</span>(pred, <span class="fu">aes</span>(age, accuracy, <span class="at">color =</span> knows)) <span class="sc">+</span></span>
-<span id="cb7-17"><a href="#cb7-17" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_hline</span>(<span class="at">yintercept =</span> .<span class="dv">5</span>, <span class="at">lty =</span> <span class="dv">3</span>) <span class="sc">+</span></span>
-<span id="cb7-18"><a href="#cb7-18" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_line</span>(<span class="at">linewidth =</span> <span class="dv">1</span>) <span class="sc">+</span></span>
-<span id="cb7-19"><a href="#cb7-19" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_point</span>(<span class="at">data =</span> emp, <span class="fu">aes</span>(<span class="at">x =</span> age_bin, <span class="at">size =</span> n), <span class="at">alpha =</span> .<span class="dv">6</span>) <span class="sc">+</span></span>
-<span id="cb7-20"><a href="#cb7-20" aria-hidden="true" tabindex="-1"></a>  <span class="fu">scale_y_continuous</span>(<span class="at">labels =</span> scales<span class="sc">::</span>percent) <span class="sc">+</span></span>
-<span id="cb7-21"><a href="#cb7-21" aria-hidden="true" tabindex="-1"></a>  <span class="fu">xlab</span>(<span class="st">&quot;Age (months)&quot;</span>) <span class="sc">+</span> <span class="fu">ylab</span>(<span class="st">&quot;Looking accuracy&quot;</span>) <span class="sc">+</span></span>
-<span id="cb7-22"><a href="#cb7-22" aria-hidden="true" tabindex="-1"></a>  <span class="fu">labs</span>(<span class="at">color =</span> <span class="cn">NULL</span>, <span class="at">size =</span> <span class="st">&quot;trials&quot;</span>,</span>
-<span id="cb7-23"><a href="#cb7-23" aria-hidden="true" tabindex="-1"></a>       <span class="at">subtitle =</span> <span class="st">&quot;Lines = model fit (within child &amp; word); points = binned empirical means&quot;</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb8"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>center_const <span class="ot">&lt;-</span> <span class="fu">mean</span>(precise<span class="sc">$</span>log_age <span class="sc">-</span> precise<span class="sc">$</span>log_age_centered)  <span class="co"># recover age centering</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>age_grid <span class="ot">&lt;-</span> <span class="fu">seq</span>(<span class="dv">14</span>, <span class="dv">38</span>, <span class="at">by =</span> <span class="dv">1</span>)</span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>pred <span class="ot">&lt;-</span> <span class="fu">expand_grid</span>(<span class="at">age =</span> age_grid, <span class="at">prec_k_t =</span> <span class="fu">c</span>(<span class="dv">0</span>, <span class="dv">1</span>)) <span class="sc">|&gt;</span></span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">log_age_centered =</span> <span class="fu">log</span>(age) <span class="sc">-</span> center_const)</span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a>pred<span class="sc">$</span>elogit <span class="ot">&lt;-</span> <span class="fu">predict</span>(m1, <span class="at">newdata =</span> pred, <span class="at">re.form =</span> <span class="cn">NA</span>)  <span class="co"># m1 defined in Section B</span></span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a>pred <span class="ot">&lt;-</span> pred <span class="sc">|&gt;</span> <span class="fu">mutate</span>(<span class="at">accuracy =</span> <span class="fu">acc</span>(elogit),</span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a>                       <span class="at">knows =</span> <span class="fu">ifelse</span>(prec_k_t <span class="sc">==</span> <span class="dv">1</span>, <span class="st">&quot;knows target&quot;</span>, <span class="st">&quot;does not know&quot;</span>))</span>
+<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-9"><a href="#cb8-9" aria-hidden="true" tabindex="-1"></a>emp <span class="ot">&lt;-</span> precise <span class="sc">|&gt;</span></span>
+<span id="cb8-10"><a href="#cb8-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">age_bin =</span> <span class="fu">round</span>(age <span class="sc">/</span> <span class="dv">2</span>) <span class="sc">*</span> <span class="dv">2</span>) <span class="sc">|&gt;</span></span>
+<span id="cb8-11"><a href="#cb8-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">group_by</span>(age_bin, prec_k_t) <span class="sc">|&gt;</span></span>
+<span id="cb8-12"><a href="#cb8-12" aria-hidden="true" tabindex="-1"></a>  <span class="fu">summarise</span>(<span class="at">accuracy =</span> <span class="fu">mean</span>(accuracy), <span class="at">n =</span> <span class="fu">n</span>(), <span class="at">.groups =</span> <span class="st">&quot;drop&quot;</span>) <span class="sc">|&gt;</span></span>
+<span id="cb8-13"><a href="#cb8-13" aria-hidden="true" tabindex="-1"></a>  <span class="fu">filter</span>(n <span class="sc">&gt;=</span> <span class="dv">30</span>) <span class="sc">|&gt;</span></span>
+<span id="cb8-14"><a href="#cb8-14" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">knows =</span> <span class="fu">ifelse</span>(prec_k_t <span class="sc">==</span> <span class="dv">1</span>, <span class="st">&quot;knows target&quot;</span>, <span class="st">&quot;does not know&quot;</span>))</span>
+<span id="cb8-15"><a href="#cb8-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-16"><a href="#cb8-16" aria-hidden="true" tabindex="-1"></a><span class="fu">ggplot</span>(pred, <span class="fu">aes</span>(age, accuracy, <span class="at">color =</span> knows)) <span class="sc">+</span></span>
+<span id="cb8-17"><a href="#cb8-17" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_hline</span>(<span class="at">yintercept =</span> .<span class="dv">5</span>, <span class="at">lty =</span> <span class="dv">3</span>) <span class="sc">+</span></span>
+<span id="cb8-18"><a href="#cb8-18" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_line</span>(<span class="at">linewidth =</span> <span class="dv">1</span>) <span class="sc">+</span></span>
+<span id="cb8-19"><a href="#cb8-19" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_point</span>(<span class="at">data =</span> emp, <span class="fu">aes</span>(<span class="at">x =</span> age_bin, <span class="at">size =</span> n), <span class="at">alpha =</span> .<span class="dv">6</span>) <span class="sc">+</span></span>
+<span id="cb8-20"><a href="#cb8-20" aria-hidden="true" tabindex="-1"></a>  <span class="fu">scale_y_continuous</span>(<span class="at">labels =</span> scales<span class="sc">::</span>percent) <span class="sc">+</span></span>
+<span id="cb8-21"><a href="#cb8-21" aria-hidden="true" tabindex="-1"></a>  <span class="fu">xlab</span>(<span class="st">&quot;Age (months)&quot;</span>) <span class="sc">+</span> <span class="fu">ylab</span>(<span class="st">&quot;Looking accuracy&quot;</span>) <span class="sc">+</span></span>
+<span id="cb8-22"><a href="#cb8-22" aria-hidden="true" tabindex="-1"></a>  <span class="fu">labs</span>(<span class="at">color =</span> <span class="cn">NULL</span>, <span class="at">size =</span> <span class="st">&quot;trials&quot;</span>,</span>
+<span id="cb8-23"><a href="#cb8-23" aria-hidden="true" tabindex="-1"></a>       <span class="at">subtitle =</span> <span class="st">&quot;Lines = model fit (within child &amp; word); points = binned empirical means&quot;</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </details>
 <div class="cell-output-display">
 <div>
@@ -2714,12 +2782,12 @@ window.Quarto = {
 <div class="cell">
 <details class="code-fold">
 <summary>Code</summary>
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb8"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>pair_summary <span class="ot">&lt;-</span> precise <span class="sc">|&gt;</span></span>
-<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">group_by</span>(cw) <span class="sc">|&gt;</span></span>
-<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">summarise</span>(<span class="at">n_ages =</span> <span class="fu">n_distinct</span>(age), <span class="at">changes =</span> <span class="fu">n_distinct</span>(prec_k_t), <span class="at">.groups =</span> <span class="st">&quot;drop&quot;</span>)</span>
-<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;child×word pairs: %d total; %d seen at ≥2 ages; %d show the child learning the word (0→1)</span><span class="sc">\n</span><span class="st">&quot;</span>,</span>
-<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a>            <span class="fu">nrow</span>(pair_summary), <span class="fu">sum</span>(pair_summary<span class="sc">$</span>n_ages <span class="sc">&gt;=</span> <span class="dv">2</span>),</span>
-<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a>            <span class="fu">sum</span>(pair_summary<span class="sc">$</span>n_ages <span class="sc">&gt;=</span> <span class="dv">2</span> <span class="sc">&amp;</span> pair_summary<span class="sc">$</span>changes <span class="sc">==</span> <span class="dv">2</span>)))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb9"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>pair_summary <span class="ot">&lt;-</span> precise <span class="sc">|&gt;</span></span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">group_by</span>(cw) <span class="sc">|&gt;</span></span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">summarise</span>(<span class="at">n_ages =</span> <span class="fu">n_distinct</span>(age), <span class="at">changes =</span> <span class="fu">n_distinct</span>(prec_k_t), <span class="at">.groups =</span> <span class="st">&quot;drop&quot;</span>)</span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;child×word pairs: %d total; %d seen at ≥2 ages; %d show the child learning the word (0→1)</span><span class="sc">\n</span><span class="st">&quot;</span>,</span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a>            <span class="fu">nrow</span>(pair_summary), <span class="fu">sum</span>(pair_summary<span class="sc">$</span>n_ages <span class="sc">&gt;=</span> <span class="dv">2</span>),</span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a>            <span class="fu">sum</span>(pair_summary<span class="sc">$</span>n_ages <span class="sc">&gt;=</span> <span class="dv">2</span> <span class="sc">&amp;</span> pair_summary<span class="sc">$</span>changes <span class="sc">==</span> <span class="dv">2</span>)))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </details>
 <div class="cell-output cell-output-stdout">
 <pre><code>child×word pairs: 2797 total; 2046 seen at ≥2 ages; 632 show the child learning the word (0→1)</code></pre>
@@ -2728,20 +2796,20 @@ window.Quarto = {
 <div class="cell">
 <details class="code-fold">
 <summary>Code</summary>
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb10"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>mL0 <span class="ot">&lt;-</span> <span class="fu">lmer</span>(elogit <span class="sc">~</span> log_age_centered <span class="sc">+</span> (<span class="dv">1</span><span class="sc">|</span>target_label) <span class="sc">+</span> (<span class="dv">1</span><span class="sc">|</span>cw), precise, <span class="at">control =</span> ctrl)</span>
-<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>mL1 <span class="ot">&lt;-</span> <span class="fu">lmer</span>(elogit <span class="sc">~</span> log_age_centered <span class="sc">+</span> prec_k_t <span class="sc">+</span> (<span class="dv">1</span><span class="sc">|</span>target_label) <span class="sc">+</span> (<span class="dv">1</span><span class="sc">|</span>cw), precise, <span class="at">control =</span> ctrl)</span>
-<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a>ciL <span class="ot">&lt;-</span> <span class="fu">confint</span>(mL1, <span class="at">parm =</span> <span class="st">&quot;prec_k_t&quot;</span>, <span class="at">method =</span> <span class="st">&quot;Wald&quot;</span>)</span>
-<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;Within child×word effect of learning the target: %.3f logit [%.3f, %.3f]  = %+.1f pp accuracy</span><span class="sc">\n</span><span class="st">&quot;</span>,</span>
-<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a>            <span class="fu">fixef</span>(mL1)[<span class="st">&quot;prec_k_t&quot;</span>], ciL[<span class="dv">1</span>], ciL[<span class="dv">2</span>], <span class="fu">pp</span>(<span class="fu">fixef</span>(mL1)[<span class="st">&quot;prec_k_t&quot;</span>])))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb11"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>mL0 <span class="ot">&lt;-</span> <span class="fu">lmer</span>(elogit <span class="sc">~</span> log_age_centered <span class="sc">+</span> (<span class="dv">1</span><span class="sc">|</span>target_label) <span class="sc">+</span> (<span class="dv">1</span><span class="sc">|</span>cw), precise, <span class="at">control =</span> ctrl)</span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>mL1 <span class="ot">&lt;-</span> <span class="fu">lmer</span>(elogit <span class="sc">~</span> log_age_centered <span class="sc">+</span> prec_k_t <span class="sc">+</span> (<span class="dv">1</span><span class="sc">|</span>target_label) <span class="sc">+</span> (<span class="dv">1</span><span class="sc">|</span>cw), precise, <span class="at">control =</span> ctrl)</span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a>ciL <span class="ot">&lt;-</span> <span class="fu">confint</span>(mL1, <span class="at">parm =</span> <span class="st">&quot;prec_k_t&quot;</span>, <span class="at">method =</span> <span class="st">&quot;Wald&quot;</span>)</span>
+<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;Within child×word effect of learning the target: %.3f logit [%.3f, %.3f]  = %+.1f pp accuracy</span><span class="sc">\n</span><span class="st">&quot;</span>,</span>
+<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a>            <span class="fu">fixef</span>(mL1)[<span class="st">&quot;prec_k_t&quot;</span>], ciL[<span class="dv">1</span>], ciL[<span class="dv">2</span>], <span class="fu">pp</span>(<span class="fu">fixef</span>(mL1)[<span class="st">&quot;prec_k_t&quot;</span>])))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </details>
 <div class="cell-output cell-output-stdout">
 <pre><code>Within child×word effect of learning the target: 0.248 logit [0.165, 0.331]  = +4.1 pp accuracy</code></pre>
 </div>
 <details class="code-fold">
 <summary>Code</summary>
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb12"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="fu">anova</span>(mL0, mL1) <span class="sc">|&gt;</span> <span class="fu">kable</span>(<span class="at">digits =</span> <span class="fu">c</span>(<span class="dv">0</span>,<span class="dv">1</span>,<span class="dv">1</span>,<span class="dv">1</span>,<span class="dv">2</span>,<span class="dv">0</span>,<span class="dv">4</span>),</span>
-<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">caption =</span> <span class="st">&quot;Likelihood-ratio test for the within-pair, over-time learning effect&quot;</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="fu">anova</span>(mL0, mL1) <span class="sc">|&gt;</span> <span class="fu">kable</span>(<span class="at">digits =</span> <span class="fu">c</span>(<span class="dv">0</span>,<span class="dv">1</span>,<span class="dv">1</span>,<span class="dv">1</span>,<span class="dv">2</span>,<span class="dv">0</span>,<span class="dv">4</span>),</span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">caption =</span> <span class="st">&quot;Likelihood-ratio test for the within-pair, over-time learning effect&quot;</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </details>
 <div class="cell-output-display">
 <table class="caption-top table table-sm table-striped small">
@@ -2809,38 +2877,38 @@ window.Quarto = {
 <div class="cell">
 <details class="code-fold">
 <summary>Code</summary>
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>pv <span class="ot">&lt;-</span> precise <span class="sc">|&gt;</span></span>
-<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">group_by</span>(cw, age, prec_k_t) <span class="sc">|&gt;</span></span>
-<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">summarise</span>(<span class="at">acc =</span> <span class="fu">mean</span>(accuracy), <span class="at">.groups =</span> <span class="st">&quot;drop&quot;</span>)</span>
-<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a>traj <span class="ot">&lt;-</span> pv <span class="sc">|&gt;</span> <span class="fu">group_by</span>(cw) <span class="sc">|&gt;</span> <span class="fu">filter</span>(<span class="fu">n</span>() <span class="sc">&gt;=</span> <span class="dv">2</span>) <span class="sc">|&gt;</span></span>
-<span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a>  <span class="fu">summarise</span>(<span class="at">grp =</span> <span class="fu">case_when</span>(<span class="fu">all</span>(prec_k_t <span class="sc">==</span> <span class="dv">0</span>) <span class="sc">~</span> <span class="st">&quot;stays unknown&quot;</span>,</span>
-<span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a>                            <span class="fu">all</span>(prec_k_t <span class="sc">==</span> <span class="dv">1</span>) <span class="sc">~</span> <span class="st">&quot;stays known&quot;</span>,</span>
-<span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a>                            <span class="cn">TRUE</span> <span class="sc">~</span> <span class="st">&quot;learns word&quot;</span>), <span class="at">.groups =</span> <span class="st">&quot;drop&quot;</span>)</span>
-<span id="cb13-9"><a href="#cb13-9" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb13-10"><a href="#cb13-10" aria-hidden="true" tabindex="-1"></a>learn_d <span class="ot">&lt;-</span> pv <span class="sc">|&gt;</span> <span class="fu">inner_join</span>(<span class="fu">filter</span>(traj, grp <span class="sc">==</span> <span class="st">&quot;learns word&quot;</span>) <span class="sc">|&gt;</span> <span class="fu">select</span>(cw), <span class="at">by =</span> <span class="st">&quot;cw&quot;</span>)</span>
-<span id="cb13-11"><a href="#cb13-11" aria-hidden="true" tabindex="-1"></a>before <span class="ot">&lt;-</span> learn_d <span class="sc">|&gt;</span> <span class="fu">filter</span>(prec_k_t <span class="sc">==</span> <span class="dv">0</span>) <span class="sc">|&gt;</span> <span class="fu">group_by</span>(cw) <span class="sc">|&gt;</span></span>
-<span id="cb13-12"><a href="#cb13-12" aria-hidden="true" tabindex="-1"></a>  <span class="fu">slice_max</span>(age, <span class="at">n =</span> <span class="dv">1</span>, <span class="at">with_ties =</span> <span class="cn">FALSE</span>) <span class="sc">|&gt;</span> <span class="fu">select</span>(cw, <span class="at">a0 =</span> age, <span class="at">acc0 =</span> acc)</span>
-<span id="cb13-13"><a href="#cb13-13" aria-hidden="true" tabindex="-1"></a>after <span class="ot">&lt;-</span> learn_d <span class="sc">|&gt;</span> <span class="fu">filter</span>(prec_k_t <span class="sc">==</span> <span class="dv">1</span>) <span class="sc">|&gt;</span> <span class="fu">group_by</span>(cw) <span class="sc">|&gt;</span></span>
-<span id="cb13-14"><a href="#cb13-14" aria-hidden="true" tabindex="-1"></a>  <span class="fu">slice_min</span>(age, <span class="at">n =</span> <span class="dv">1</span>, <span class="at">with_ties =</span> <span class="cn">FALSE</span>) <span class="sc">|&gt;</span> <span class="fu">select</span>(cw, <span class="at">a1 =</span> age, <span class="at">acc1 =</span> acc)</span>
-<span id="cb13-15"><a href="#cb13-15" aria-hidden="true" tabindex="-1"></a>learn_delta <span class="ot">&lt;-</span> <span class="fu">inner_join</span>(before, after, <span class="at">by =</span> <span class="st">&quot;cw&quot;</span>) <span class="sc">|&gt;</span> <span class="fu">filter</span>(a1 <span class="sc">&gt;</span> a0) <span class="sc">|&gt;</span></span>
-<span id="cb13-16"><a href="#cb13-16" aria-hidden="true" tabindex="-1"></a>  <span class="fu">transmute</span>(cw, <span class="at">dt =</span> a1 <span class="sc">-</span> a0, <span class="at">dacc =</span> acc1 <span class="sc">-</span> acc0, <span class="at">grp =</span> <span class="st">&quot;learns word&quot;</span>)</span>
-<span id="cb13-17"><a href="#cb13-17" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb13-18"><a href="#cb13-18" aria-hidden="true" tabindex="-1"></a>stay_delta <span class="ot">&lt;-</span> pv <span class="sc">|&gt;</span> <span class="fu">inner_join</span>(<span class="fu">filter</span>(traj, grp <span class="sc">==</span> <span class="st">&quot;stays unknown&quot;</span>) <span class="sc">|&gt;</span> <span class="fu">select</span>(cw), <span class="at">by =</span> <span class="st">&quot;cw&quot;</span>) <span class="sc">|&gt;</span></span>
-<span id="cb13-19"><a href="#cb13-19" aria-hidden="true" tabindex="-1"></a>  <span class="fu">group_by</span>(cw) <span class="sc">|&gt;</span> <span class="fu">arrange</span>(age) <span class="sc">|&gt;</span></span>
-<span id="cb13-20"><a href="#cb13-20" aria-hidden="true" tabindex="-1"></a>  <span class="fu">summarise</span>(<span class="at">dt =</span> <span class="fu">last</span>(age) <span class="sc">-</span> <span class="fu">first</span>(age), <span class="at">dacc =</span> <span class="fu">last</span>(acc) <span class="sc">-</span> <span class="fu">first</span>(acc), <span class="at">.groups =</span> <span class="st">&quot;drop&quot;</span>) <span class="sc">|&gt;</span></span>
-<span id="cb13-21"><a href="#cb13-21" aria-hidden="true" tabindex="-1"></a>  <span class="fu">filter</span>(dt <span class="sc">&gt;</span> <span class="dv">0</span>) <span class="sc">|&gt;</span> <span class="fu">mutate</span>(<span class="at">grp =</span> <span class="st">&quot;stays unknown&quot;</span>)</span>
-<span id="cb13-22"><a href="#cb13-22" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb13-23"><a href="#cb13-23" aria-hidden="true" tabindex="-1"></a>dd <span class="ot">&lt;-</span> <span class="fu">bind_rows</span>(learn_delta, stay_delta)</span>
-<span id="cb13-24"><a href="#cb13-24" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb13-25"><a href="#cb13-25" aria-hidden="true" tabindex="-1"></a><span class="fu">ggplot</span>(dd, <span class="fu">aes</span>(dt, <span class="dv">100</span> <span class="sc">*</span> dacc, <span class="at">color =</span> grp)) <span class="sc">+</span></span>
-<span id="cb13-26"><a href="#cb13-26" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_hline</span>(<span class="at">yintercept =</span> <span class="dv">0</span>, <span class="at">lty =</span> <span class="dv">3</span>) <span class="sc">+</span></span>
-<span id="cb13-27"><a href="#cb13-27" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_point</span>(<span class="at">alpha =</span> .<span class="dv">25</span>) <span class="sc">+</span></span>
-<span id="cb13-28"><a href="#cb13-28" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_smooth</span>(<span class="at">method =</span> <span class="st">&quot;lm&quot;</span>, <span class="at">se =</span> <span class="cn">TRUE</span>) <span class="sc">+</span></span>
-<span id="cb13-29"><a href="#cb13-29" aria-hidden="true" tabindex="-1"></a>  <span class="fu">xlab</span>(<span class="st">&quot;Months elapsed between the two visits&quot;</span>) <span class="sc">+</span></span>
-<span id="cb13-30"><a href="#cb13-30" aria-hidden="true" tabindex="-1"></a>  <span class="fu">ylab</span>(<span class="st">&quot;Change in accuracy on the word (pp)&quot;</span>) <span class="sc">+</span></span>
-<span id="cb13-31"><a href="#cb13-31" aria-hidden="true" tabindex="-1"></a>  <span class="fu">labs</span>(<span class="at">color =</span> <span class="cn">NULL</span>,</span>
-<span id="cb13-32"><a href="#cb13-32" aria-hidden="true" tabindex="-1"></a>       <span class="at">subtitle =</span> <span class="st">&quot;Both rise with elapsed time (maturation); the gap is the word-learning bonus&quot;</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb14"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>pv <span class="ot">&lt;-</span> precise <span class="sc">|&gt;</span></span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">group_by</span>(cw, age, prec_k_t) <span class="sc">|&gt;</span></span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">summarise</span>(<span class="at">acc =</span> <span class="fu">mean</span>(accuracy), <span class="at">.groups =</span> <span class="st">&quot;drop&quot;</span>)</span>
+<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a>traj <span class="ot">&lt;-</span> pv <span class="sc">|&gt;</span> <span class="fu">group_by</span>(cw) <span class="sc">|&gt;</span> <span class="fu">filter</span>(<span class="fu">n</span>() <span class="sc">&gt;=</span> <span class="dv">2</span>) <span class="sc">|&gt;</span></span>
+<span id="cb14-6"><a href="#cb14-6" aria-hidden="true" tabindex="-1"></a>  <span class="fu">summarise</span>(<span class="at">grp =</span> <span class="fu">case_when</span>(<span class="fu">all</span>(prec_k_t <span class="sc">==</span> <span class="dv">0</span>) <span class="sc">~</span> <span class="st">&quot;stays unknown&quot;</span>,</span>
+<span id="cb14-7"><a href="#cb14-7" aria-hidden="true" tabindex="-1"></a>                            <span class="fu">all</span>(prec_k_t <span class="sc">==</span> <span class="dv">1</span>) <span class="sc">~</span> <span class="st">&quot;stays known&quot;</span>,</span>
+<span id="cb14-8"><a href="#cb14-8" aria-hidden="true" tabindex="-1"></a>                            <span class="cn">TRUE</span> <span class="sc">~</span> <span class="st">&quot;learns word&quot;</span>), <span class="at">.groups =</span> <span class="st">&quot;drop&quot;</span>)</span>
+<span id="cb14-9"><a href="#cb14-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb14-10"><a href="#cb14-10" aria-hidden="true" tabindex="-1"></a>learn_d <span class="ot">&lt;-</span> pv <span class="sc">|&gt;</span> <span class="fu">inner_join</span>(<span class="fu">filter</span>(traj, grp <span class="sc">==</span> <span class="st">&quot;learns word&quot;</span>) <span class="sc">|&gt;</span> <span class="fu">select</span>(cw), <span class="at">by =</span> <span class="st">&quot;cw&quot;</span>)</span>
+<span id="cb14-11"><a href="#cb14-11" aria-hidden="true" tabindex="-1"></a>before <span class="ot">&lt;-</span> learn_d <span class="sc">|&gt;</span> <span class="fu">filter</span>(prec_k_t <span class="sc">==</span> <span class="dv">0</span>) <span class="sc">|&gt;</span> <span class="fu">group_by</span>(cw) <span class="sc">|&gt;</span></span>
+<span id="cb14-12"><a href="#cb14-12" aria-hidden="true" tabindex="-1"></a>  <span class="fu">slice_max</span>(age, <span class="at">n =</span> <span class="dv">1</span>, <span class="at">with_ties =</span> <span class="cn">FALSE</span>) <span class="sc">|&gt;</span> <span class="fu">select</span>(cw, <span class="at">a0 =</span> age, <span class="at">acc0 =</span> acc)</span>
+<span id="cb14-13"><a href="#cb14-13" aria-hidden="true" tabindex="-1"></a>after <span class="ot">&lt;-</span> learn_d <span class="sc">|&gt;</span> <span class="fu">filter</span>(prec_k_t <span class="sc">==</span> <span class="dv">1</span>) <span class="sc">|&gt;</span> <span class="fu">group_by</span>(cw) <span class="sc">|&gt;</span></span>
+<span id="cb14-14"><a href="#cb14-14" aria-hidden="true" tabindex="-1"></a>  <span class="fu">slice_min</span>(age, <span class="at">n =</span> <span class="dv">1</span>, <span class="at">with_ties =</span> <span class="cn">FALSE</span>) <span class="sc">|&gt;</span> <span class="fu">select</span>(cw, <span class="at">a1 =</span> age, <span class="at">acc1 =</span> acc)</span>
+<span id="cb14-15"><a href="#cb14-15" aria-hidden="true" tabindex="-1"></a>learn_delta <span class="ot">&lt;-</span> <span class="fu">inner_join</span>(before, after, <span class="at">by =</span> <span class="st">&quot;cw&quot;</span>) <span class="sc">|&gt;</span> <span class="fu">filter</span>(a1 <span class="sc">&gt;</span> a0) <span class="sc">|&gt;</span></span>
+<span id="cb14-16"><a href="#cb14-16" aria-hidden="true" tabindex="-1"></a>  <span class="fu">transmute</span>(cw, <span class="at">dt =</span> a1 <span class="sc">-</span> a0, <span class="at">dacc =</span> acc1 <span class="sc">-</span> acc0, <span class="at">grp =</span> <span class="st">&quot;learns word&quot;</span>)</span>
+<span id="cb14-17"><a href="#cb14-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb14-18"><a href="#cb14-18" aria-hidden="true" tabindex="-1"></a>stay_delta <span class="ot">&lt;-</span> pv <span class="sc">|&gt;</span> <span class="fu">inner_join</span>(<span class="fu">filter</span>(traj, grp <span class="sc">==</span> <span class="st">&quot;stays unknown&quot;</span>) <span class="sc">|&gt;</span> <span class="fu">select</span>(cw), <span class="at">by =</span> <span class="st">&quot;cw&quot;</span>) <span class="sc">|&gt;</span></span>
+<span id="cb14-19"><a href="#cb14-19" aria-hidden="true" tabindex="-1"></a>  <span class="fu">group_by</span>(cw) <span class="sc">|&gt;</span> <span class="fu">arrange</span>(age) <span class="sc">|&gt;</span></span>
+<span id="cb14-20"><a href="#cb14-20" aria-hidden="true" tabindex="-1"></a>  <span class="fu">summarise</span>(<span class="at">dt =</span> <span class="fu">last</span>(age) <span class="sc">-</span> <span class="fu">first</span>(age), <span class="at">dacc =</span> <span class="fu">last</span>(acc) <span class="sc">-</span> <span class="fu">first</span>(acc), <span class="at">.groups =</span> <span class="st">&quot;drop&quot;</span>) <span class="sc">|&gt;</span></span>
+<span id="cb14-21"><a href="#cb14-21" aria-hidden="true" tabindex="-1"></a>  <span class="fu">filter</span>(dt <span class="sc">&gt;</span> <span class="dv">0</span>) <span class="sc">|&gt;</span> <span class="fu">mutate</span>(<span class="at">grp =</span> <span class="st">&quot;stays unknown&quot;</span>)</span>
+<span id="cb14-22"><a href="#cb14-22" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb14-23"><a href="#cb14-23" aria-hidden="true" tabindex="-1"></a>dd <span class="ot">&lt;-</span> <span class="fu">bind_rows</span>(learn_delta, stay_delta)</span>
+<span id="cb14-24"><a href="#cb14-24" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb14-25"><a href="#cb14-25" aria-hidden="true" tabindex="-1"></a><span class="fu">ggplot</span>(dd, <span class="fu">aes</span>(dt, <span class="dv">100</span> <span class="sc">*</span> dacc, <span class="at">color =</span> grp)) <span class="sc">+</span></span>
+<span id="cb14-26"><a href="#cb14-26" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_hline</span>(<span class="at">yintercept =</span> <span class="dv">0</span>, <span class="at">lty =</span> <span class="dv">3</span>) <span class="sc">+</span></span>
+<span id="cb14-27"><a href="#cb14-27" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_point</span>(<span class="at">alpha =</span> .<span class="dv">25</span>) <span class="sc">+</span></span>
+<span id="cb14-28"><a href="#cb14-28" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_smooth</span>(<span class="at">method =</span> <span class="st">&quot;lm&quot;</span>, <span class="at">se =</span> <span class="cn">TRUE</span>) <span class="sc">+</span></span>
+<span id="cb14-29"><a href="#cb14-29" aria-hidden="true" tabindex="-1"></a>  <span class="fu">xlab</span>(<span class="st">&quot;Months elapsed between the two visits&quot;</span>) <span class="sc">+</span></span>
+<span id="cb14-30"><a href="#cb14-30" aria-hidden="true" tabindex="-1"></a>  <span class="fu">ylab</span>(<span class="st">&quot;Change in accuracy on the word (pp)&quot;</span>) <span class="sc">+</span></span>
+<span id="cb14-31"><a href="#cb14-31" aria-hidden="true" tabindex="-1"></a>  <span class="fu">labs</span>(<span class="at">color =</span> <span class="cn">NULL</span>,</span>
+<span id="cb14-32"><a href="#cb14-32" aria-hidden="true" tabindex="-1"></a>       <span class="at">subtitle =</span> <span class="st">&quot;Both rise with elapsed time (maturation); the gap is the word-learning bonus&quot;</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </details>
 <div class="cell-output-display">
 <div>
@@ -2853,10 +2921,10 @@ window.Quarto = {
 <div class="cell">
 <details class="code-fold">
 <summary>Code</summary>
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb14"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>dd <span class="sc">|&gt;</span> <span class="fu">group_by</span>(grp) <span class="sc">|&gt;</span></span>
-<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">summarise</span>(<span class="at">n_pairs =</span> <span class="fu">n</span>(), <span class="at">median_months =</span> <span class="fu">median</span>(dt),</span>
-<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>            <span class="at">mean_gain_pp =</span> <span class="dv">100</span> <span class="sc">*</span> <span class="fu">mean</span>(dacc), <span class="at">.groups =</span> <span class="st">&quot;drop&quot;</span>) <span class="sc">|&gt;</span></span>
-<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">kable</span>(<span class="at">digits =</span> <span class="dv">1</span>, <span class="at">caption =</span> <span class="st">&quot;Accuracy change over the interval, by trajectory type&quot;</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb15"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>dd <span class="sc">|&gt;</span> <span class="fu">group_by</span>(grp) <span class="sc">|&gt;</span></span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">summarise</span>(<span class="at">n_pairs =</span> <span class="fu">n</span>(), <span class="at">median_months =</span> <span class="fu">median</span>(dt),</span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>            <span class="at">mean_gain_pp =</span> <span class="dv">100</span> <span class="sc">*</span> <span class="fu">mean</span>(dacc), <span class="at">.groups =</span> <span class="st">&quot;drop&quot;</span>) <span class="sc">|&gt;</span></span>
+<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">kable</span>(<span class="at">digits =</span> <span class="dv">1</span>, <span class="at">caption =</span> <span class="st">&quot;Accuracy change over the interval, by trajectory type&quot;</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </details>
 <div class="cell-output-display">
 <table class="caption-top table table-sm table-striped small">

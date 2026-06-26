@@ -199,6 +199,55 @@ is steepest at 0.5, a fixed elogit effect is a *bigger* accuracy gain near chanc
 (≈ `r round(100 * acc(ref_elogit))`%); the next section shows how it plays out
 across the whole age range.
 
+## B1. The distractor's two roles: salience vs. knowledge
+
+The target/distractor asymmetry above can look puzzling next to notebook 4, where
+"controlling for the distractor" mattered a great deal. The resolution is that a
+word plays **two separate roles**, and `m2` estimates both at once:
+
+- its **perceptual identity / salience** — how grabby it is as a competitor,
+  *regardless of whether the child knows it* — captured by the word **random
+  intercept**;
+- the child's **knowledge** of it — captured by the `produces` **fixed effect**.
+
+```{r two-roles}
+vc <- as.data.frame(VarCorr(m2))
+ci2 <- confint(m2, parm = c("prec_k_t", "prec_k_d"), method = "Wald")
+tibble(
+  word = c("target", "distractor"),
+  identity_salience_sd = c(vc$sdcor[vc$grp == "target_label"],
+                           vc$sdcor[vc$grp == "distractor_label"]),
+  knowledge_effect = fixef(m2)[c("prec_k_t", "prec_k_d")],
+  knowledge_ci = sprintf("[%.2f, %.2f]", ci2[c("prec_k_t","prec_k_d"), 1],
+                                          ci2[c("prec_k_t","prec_k_d"), 2])
+) |>
+  kable(digits = 2,
+        col.names = c("word", "identity / salience (random-intercept SD, logit)",
+                      "knowledge effect (logit)", "95% CI"),
+        caption = "Each word matters two ways: as a perceptual object, and as something the child does or doesn't know.")
+```
+
+The two roles **completely dissociate for the distractor**. Its *identity*
+carries nearly as much variance as the target's (the random-intercept SDs are
+comparable) — so *which* word is the competitor matters a lot, perceptually. But
+its *knowledge* effect is ~0: whether the child actually knows the competitor word
+makes no difference. The target is the opposite of null on the knowledge side.
+
+This single picture reconciles the notebooks:
+
+- **Notebook 4's gains** came from partialling out distractor **identity** and
+  **animacy** — perceptual structure that is *not* word knowledge. Removing it
+  cleans the LWL measure, which is a **measurement** win.
+- **Notebooks 5–6's null distractor / null H3 contrast** are about distractor
+  **knowledge**, which genuinely plays no role. The 2AFC decision is
+  **asymmetric**: "do I recognise the *target*?", not a knowledge race between
+  target and competitor.
+
+So salience and knowledge are different axes. Salience must be removed to *see*
+the signal; the signal that remains is real **target**-word knowledge (confirmed
+causally by the longitudinal test in Section C) — modest, but not an artifact of
+the partialling.
+
 ## B2. The effect in accuracy × age space
 
 Abstract coefficients are hard to feel. Here is looking **accuracy by age**,
