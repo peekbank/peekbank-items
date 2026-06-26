@@ -123,12 +123,7 @@ It takes **both** moves. On the same well-estimated words, *raw accuracy* goes
 from the wrong-direction *r* ≈ +0.28 (all words) to roughly flat (*r* ≈ 0) — the
 frequency filter removes the confound but leaves no positive linkage — whereas
 the *adjusted intercept* reaches *r* ≈ −0.45. So the frequency filter cleans up
-the predictor and the LWL-side modeling supplies the actual signal:
-
-```{r fix-freq-naive}
-plot_corr(mdf, "aoa", "avg_accuracy",
-          "Wordbank AoA (months)", "Raw avg accuracy", min_n = 200)
-```
+the predictor and the LWL-side modeling supplies the actual signal.
 
 ## Summary of correlations
 

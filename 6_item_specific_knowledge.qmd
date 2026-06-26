@@ -146,6 +146,9 @@ the variation that remains:
 - `(1 | target_label)` — the **target word's** general difficulty/salience
 - `(1 | distractor_label)` — the **distractor word's** general grabbiness
 
+(These word intercepts absorb **animacy** and every other fixed property of a
+word, so — unlike notebooks 4 and 5 — no separate animacy term is needed here.)
+
 $$
 \textbf{m0:}\quad \text{elogit} = \beta_0 + \beta_{age}\log\text{age} + u_{child} + u_{tword} + u_{dword} + v_{dataset} + \varepsilon
 $$

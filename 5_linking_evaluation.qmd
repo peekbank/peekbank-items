@@ -41,6 +41,7 @@ d_sub   <- readRDS(here("cached_intermediates", "1_d_sub.Rds"))
 cdi     <- readRDS(here("cached_intermediates", "3_cdi_difficulty.Rds"))
 subset_dat  <- readRDS(here("cached_intermediates", "0_cdi_items_subset.Rds"))
 subject_map <- readRDS(here("cached_intermediates", "0_subject_map.Rds"))
+animates    <- readRDS(here("cached_intermediates", "2_lwl_item.Rds"))$animates
 
 p2pl <- function(theta, a, b) plogis(a * (theta - b))
 ```
@@ -63,7 +64,9 @@ cdi_diff <- cdi$item_pars |> select(item, a, b)
 base <- d_trial |>
   rename(accuracy = long_window_accuracy, elogit = long_window_elogit) |>
   filter(!is.na(elogit)) |>
-  mutate(log_age = log(age), log_age_centered = log_age - mean(log_age)) |>
+  mutate(log_age = log(age), log_age_centered = log_age - mean(log_age),
+         animate_target = target_label %in% animates,
+         animate_distractor = distractor_label %in% animates) |>
   left_join(cdi_diff |> rename(a_t = a, b_t = b), by = c("target_label" = "item")) |>
   left_join(cdi_diff |> rename(a_d = a, b_d = b), by = c("distractor_label" = "item")) |>
   left_join(d_sub |> select(administration_id, prod), by = "administration_id") |>
@@ -110,21 +113,34 @@ frames <- list(
 # 2. How much data does each setting have?
 
 A key design choice: we fit each setting on its **own maximal data**, not on a
-shared common subset. Forcing a common subset makes coefficients trivially
-comparable but throws away the main advantage of the aggregate/imputed
-settings — scale — and restricts everything to the narrow-age TotLot sample. (We
-do show a controlled common-subset check at the end.)
+shared common subset. Crucially, the three settings draw on **different slices of
+the database**:
+
+- **aggregate** needs only a word-difficulty estimate, so it uses *every* English
+  trial — all 26 datasets.
+- **imputed** needs a child's CDI *summary* score, so it uses the (still large)
+  set of children with any CDI.
+- **precise** needs *item-level* CDI, which exists only for the Stanford TotLot
+  cohort — **229 children** in 3 datasets. Its trial count is nonetheless sizable
+  because those children are **longitudinal** (~6.5 sessions each, many trials
+  per session).
+
+So the big numbers below are *trials* and *administrations* (LWL sessions), not
+unique children — note the separate `children` column. Forcing all three onto a
+common subset would throw away the scale of aggregate/imputed and restrict
+everything to TotLot; we show that controlled check at the end instead.
 
 ```{r data-availability}
 imap_dfr(frames, ~ tibble(
   setting = .y,
   trials = nrow(.x),
-  children = n_distinct(.x$administration_id),
+  administrations = n_distinct(.x$administration_id),
+  children = n_distinct(.x$subject_id),
+  datasets = n_distinct(.x$dataset_name),
   target_words = n_distinct(.x$target_label),
-  age_min = round(min(.x$age), 1),
-  age_max = round(max(.x$age), 1),
-  longitudinal = ifelse(.y == "precise", "yes (median 6 visits/child)", "cross-sectional")
-)) |> kable(caption = "Maximal usable data per setting")
+  age = sprintf("%.0f–%.0f", min(.x$age), max(.x$age)),
+  longitudinal = ifelse(.y == "precise", "yes (~6.5 sessions/child)", "cross-sectional")
+)) |> kable(caption = "Maximal usable data per setting (note: trials/administrations ≫ children)")
 ```
 
 # 3. The four models
@@ -134,7 +150,7 @@ Every model shares the same random structure — a child intercept `u_c`
 how knowledge enters:
 
 $$
-\textbf{H0:}\quad \text{elogit} = \beta_0 + \beta_{age}\log\text{age} + u_c + v_s + \varepsilon
+\textbf{H0:}\quad \text{elogit} = \beta_0 + \beta_{age}\log\text{age} + \beta_{anim}\text{animacy} + u_c + v_s + \varepsilon
 $$
 $$
 \textbf{H1:}\quad \ldots + \beta_t\,k_t \qquad\text{(target only)} \qquad
@@ -154,9 +170,17 @@ knowledge coefficient is allowed to ride on between-word difficulty. That is the
 right choice for "does knowledge predict looking at all," and it is the bridge to
 notebook 6, which adds word intercepts to isolate the purely *item-specific* part.
 
+All models also include **animacy** fixed effects (`animate_target`,
+`animate_distractor`) in the shared baseline. Animacy is a perceptual-salience
+confound that mattered a lot in notebook 4, so we control it here too — though as
+it turns out it barely moves the knowledge coefficients (the settings already
+carry word identity). (Notebook 6 needs no animacy term: its *word* random
+intercepts absorb animacy completely, since animacy is a property of the word.)
+
 ```{r model-helpers}
+baseline <- c("log_age_centered", "animate_target", "animate_distractor")
 fit_model <- function(d, terms) {
-  fixed <- paste(c("log_age_centered", terms), collapse = " + ")
+  fixed <- paste(c(baseline, terms), collapse = " + ")
   lmer(as.formula(paste0("elogit ~ ", fixed, " + (1|administration_id) + (1|dataset_name)")),
        data = d, control = lmerControl(optimizer = "bobyqa"))
 }
@@ -181,6 +205,8 @@ coef_h2 <- imap_dfr(frames, function(d, setting) {
          term = c("knows target", "knows distractor"),
          beta = fixef(m)[c("k_t", "k_d")], lo = ci[, 1], hi = ci[, 2])
 })
+coef_h2 <- coef_h2 |>
+  mutate(term = factor(term, levels = c("knows target", "knows distractor")))
 
 ggplot(coef_h2, aes(x = beta, y = setting, color = setting)) +
   geom_vline(xintercept = 0, lty = 2) +
@@ -248,7 +274,7 @@ tibble(setting = names(ceilings), explainable_ceiling = ceilings) |>
 ```{r cv}
 set.seed(42)
 cv_r2 <- function(d, terms, n_folds = 5) {
-  fixed <- paste(c("log_age_centered", terms), collapse = " + ")
+  fixed <- paste(c(baseline, terms), collapse = " + ")
   form <- as.formula(paste0("elogit ~ ", fixed,
                             " + (1|administration_id) + (1|dataset_name)"))
   subs <- unique(d$administration_id)
@@ -307,7 +333,8 @@ common_coef <- bind_rows(
     m <- fit_model(.x, c("k_t", "k_d")); ci <- confint(m, c("k_t","k_d"), method = "Wald")
     tibble(term = c("knows target","knows distractor"),
            beta = fixef(m)[c("k_t","k_d")], lo = ci[,1], hi = ci[,2])
-  }) |> ungroup()
+  }) |> ungroup() |>
+  mutate(term = factor(term, levels = c("knows target", "knows distractor")))
 
 ggplot(common_coef, aes(x = beta, y = setting, color = setting)) +
   geom_vline(xintercept = 0, lty = 2) +
