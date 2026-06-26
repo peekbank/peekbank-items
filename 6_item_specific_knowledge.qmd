@@ -187,9 +187,55 @@ tibble(
         caption = "Item-specific effects: logit, 95% CI, and accuracy (pp). Target should be +, distractor ~0/−.")
 ```
 
-The **accuracy_pp** column is the headline effect size: how many percentage
-points of looking accuracy a child gains on a word they specifically know, with
-their overall ability and the word's difficulty held fixed.
+**Reading the scale.** `elogit = log(target looks / distractor looks)`, and
+`plogis(elogit)` is the proportion of looks to the target — i.e. looking
+**accuracy** on a 0–1 scale, where **0.5 is chance**. Because the logistic curve
+is steepest at 0.5, a fixed elogit effect is a *bigger* accuracy gain near chance
+(harder words, younger kids) and a *smaller* one near ceiling. The
+`accuracy_pp` column above evaluates the effect at the sample's mean accuracy
+(≈ `r round(100 * acc(ref_elogit))`%); the next section shows how it plays out
+across the whole age range.
+
+## B2. The effect in accuracy × age space
+
+Abstract coefficients are hard to feel. Here is looking **accuracy by age**,
+split by whether the child produces the target word. Points are binned empirical
+means (size = #trials); lines are the fitted curves from the within-child/word
+model `m1` (Section B), back-transformed from elogit to accuracy.
+
+```{r marginal-plot}
+center_const <- mean(precise$log_age - precise$log_age_centered)  # recover age centering
+age_grid <- seq(14, 38, by = 1)
+pred <- expand_grid(age = age_grid, prec_k_t = c(0, 1)) |>
+  mutate(log_age_centered = log(age) - center_const)
+pred$elogit <- predict(m1, newdata = pred, re.form = NA)  # m1 defined in Section B
+pred <- pred |> mutate(accuracy = acc(elogit),
+                       knows = ifelse(prec_k_t == 1, "knows target", "does not know"))
+
+emp <- precise |>
+  mutate(age_bin = round(age / 2) * 2) |>
+  group_by(age_bin, prec_k_t) |>
+  summarise(accuracy = mean(accuracy), n = n(), .groups = "drop") |>
+  filter(n >= 30) |>
+  mutate(knows = ifelse(prec_k_t == 1, "knows target", "does not know"))
+
+ggplot(pred, aes(age, accuracy, color = knows)) +
+  geom_hline(yintercept = .5, lty = 3) +
+  geom_line(linewidth = 1) +
+  geom_point(data = emp, aes(x = age_bin, size = n), alpha = .6) +
+  scale_y_continuous(labels = scales::percent) +
+  xlab("Age (months)") + ylab("Looking accuracy") +
+  labs(color = NULL, size = "trials",
+       subtitle = "Lines = model fit (within child & word); points = binned empirical means")
+```
+
+Two things to read off the figure. **(1) Effect size:** the vertical gap between
+the curves *is* the item-specific effect, in accuracy units — a few points,
+wider at younger ages where there's more room above chance. **(2) Specification:**
+the empirical points track the fitted lines, so the constant-in-logit model is a
+reasonable description. (The *empirical* gap is a bit larger than the model gap
+because raw known-vs-unknown also reflects that known words tend to be easier and
+known by abler children — the confounds the model removes.)
 
 ## C. Longitudinal test: does learning a word raise accuracy on it?
 
@@ -229,41 +275,80 @@ This estimate is the strongest evidence for the linkage: it comes only from
 moments where a child's knowledge of a specific word changed, with the word's
 identity, the child's identity, and general age effects all controlled.
 
-### Before vs after acquisition
+### Before vs after acquisition — accounting for elapsed time
 
-For the pairs where the child learns the word, mean accuracy on that word while
-**not yet** producing it vs **after** they produce it (each point is one
-child×word pair).
+A simple before/after comparison is misleading because **months pass** between a
+child's "not yet known" and "known" visits, and accuracy rises with age anyway.
+To separate **word-learning** from **maturation**, we compare two kinds of
+child×word pairs that both *start* with the word unknown:
 
-```{r before-after}
-learners <- pair_summary |> filter(n_ages >= 2, changes == 2) |> pull(cw)
-ba <- precise |>
-  filter(cw %in% learners) |>
-  group_by(cw, prec_k_t) |>
-  summarise(acc = mean(accuracy), .groups = "drop") |>
-  mutate(state = ifelse(prec_k_t == 1, "after", "before")) |>
-  select(cw, state, acc) |>
-  pivot_wider(names_from = state, values_from = acc) |>
-  filter(!is.na(before), !is.na(after))
+- **learns word** — acquires it between visits (last-unknown → first-known visit)
+- **stays unknown** — never acquires it over the observation window (first → last)
 
-tt <- t.test(ba$after, ba$before, paired = TRUE)
-ggplot(ba, aes(x = before, y = after)) +
-  geom_abline(lty = 2) +
-  geom_point(alpha = .4) +
-  coord_equal() +
-  xlab("Accuracy BEFORE acquiring the word") +
-  ylab("Accuracy AFTER acquiring the word") +
-  labs(subtitle = sprintf("%d learner pairs; mean gain %+.1f pp (paired t p = %.4g)",
-                          nrow(ba), 100 * mean(ba$after - ba$before), tt$p.value))
+Both groups age over the interval, so plotting the **change in accuracy against
+the months elapsed** puts maturation on the x-axis; the vertical gap between the
+groups is the part attributable to *learning the word*.
+
+```{r before-after-time}
+pv <- precise |>
+  group_by(cw, age, prec_k_t) |>
+  summarise(acc = mean(accuracy), .groups = "drop")
+
+traj <- pv |> group_by(cw) |> filter(n() >= 2) |>
+  summarise(grp = case_when(all(prec_k_t == 0) ~ "stays unknown",
+                            all(prec_k_t == 1) ~ "stays known",
+                            TRUE ~ "learns word"), .groups = "drop")
+
+learn_d <- pv |> inner_join(filter(traj, grp == "learns word") |> select(cw), by = "cw")
+before <- learn_d |> filter(prec_k_t == 0) |> group_by(cw) |>
+  slice_max(age, n = 1, with_ties = FALSE) |> select(cw, a0 = age, acc0 = acc)
+after <- learn_d |> filter(prec_k_t == 1) |> group_by(cw) |>
+  slice_min(age, n = 1, with_ties = FALSE) |> select(cw, a1 = age, acc1 = acc)
+learn_delta <- inner_join(before, after, by = "cw") |> filter(a1 > a0) |>
+  transmute(cw, dt = a1 - a0, dacc = acc1 - acc0, grp = "learns word")
+
+stay_delta <- pv |> inner_join(filter(traj, grp == "stays unknown") |> select(cw), by = "cw") |>
+  group_by(cw) |> arrange(age) |>
+  summarise(dt = last(age) - first(age), dacc = last(acc) - first(acc), .groups = "drop") |>
+  filter(dt > 0) |> mutate(grp = "stays unknown")
+
+dd <- bind_rows(learn_delta, stay_delta)
+
+ggplot(dd, aes(dt, 100 * dacc, color = grp)) +
+  geom_hline(yintercept = 0, lty = 3) +
+  geom_point(alpha = .25) +
+  geom_smooth(method = "lm", se = TRUE) +
+  xlab("Months elapsed between the two visits") +
+  ylab("Change in accuracy on the word (pp)") +
+  labs(color = NULL,
+       subtitle = "Both rise with elapsed time (maturation); the gap is the word-learning bonus")
 ```
+
+```{r before-after-summary}
+dd |> group_by(grp) |>
+  summarise(n_pairs = n(), median_months = median(dt),
+            mean_gain_pp = 100 * mean(dacc), .groups = "drop") |>
+  kable(digits = 1, caption = "Accuracy change over the interval, by trajectory type")
+```
+
+The table makes the point the raw scatter hid: learners gain more *in total*
+(~9 pp), but pairs whose word stayed unknown also improve almost as much (~8 pp) —
+that part is pure maturation. The **difference** between the groups (≈1–2 pp at
+matched elapsed time) is the cleanly-identified word-learning effect. It is in the
+same direction as the model's continuous-age estimate (~5 pp) but smaller; the two
+bracket the truth. Honest read: the item-specific effect is **robust in sign but
+modest in size** (low single-digit pp) once maturation is properly removed.
 
 ## What to conclude
 
-- **The item-level linkage is real.** Holding child ability and word difficulty
-  fixed, knowing the specific target word raises looking accuracy by several
-  percentage points (Section B), and the effect reproduces **within child×word
-  over time**: when a child learns a word, accuracy on that word goes up beyond
-  what maturation explains (Section C).
+- **The item-level linkage is real, but modest.** Holding child ability and word
+  difficulty fixed, knowing the specific target word is associated with a few
+  percentage points of looking accuracy (Sections B–B2), and the effect reproduces
+  **within child×word over time**: when a child learns a word, accuracy on that
+  word rises *beyond* what the months of maturation explain (Section C). Once
+  maturation is properly removed, the magnitude is small (≈1–5 pp depending on
+  how strictly it is estimated) — clearly positive, but far from the dominant
+  driver of trial accuracy.
 - **It is asymmetric** — target knowledge drives it, distractor knowledge does
   not. This is the concrete reason the symmetric 2AFC contrast (H3 in notebook 5)
   failed, and why aggregate analyses, which average over both, saw nothing.
