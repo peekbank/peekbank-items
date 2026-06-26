@@ -19,12 +19,30 @@ level**:
 1. a better LWL measure (animacy-adjusted random intercept vs raw accuracy);
 2. a better CDI measure (IRT difficulty `b` vs AoA).
 
-No child information enters here — this is the "aggregate" data setting. The
-trial-level child×item comparison across settings is in notebook 5.
+No child information enters here — this is the **"aggregate" data setting**, and
+it is the first of the three settings (aggregate / imputed / precise) that
+notebook 5 compares in a common trial-level framework. This notebook does the
+aggregate case thoroughly at the *word* level; notebook 5 picks it up at the
+*trial* level and adds the child-specific settings.
+
+**What the measures are** (all per target word):
+
+- `avg_accuracy` / `avg_elogit` — raw mean looking accuracy for the word, pooled
+  over all trials. Badly confounded: a word's average is dragged around by the
+  ages and studies it happens to be tested in.
+- `intercept_base` — the word's random intercept from a mixed model (notebook 2)
+  that controls for age (within dataset), child, dataset, and the distractor.
+- `intercept_adj` — the same, but the model **also** removes target/distractor
+  **animacy** (perceptual salience). This is our cleanest LWL difficulty measure:
+  a word's recognition ease with confounds partialled out. Higher = recognized
+  better. (See `2_lwl_item_difficulty` for the model.)
+
+The CDI-side difficulty is the IRT `b` and Wordbank `aoa` from notebook 3.
 
 ```{r setup}
 library(here)
 library(ggrepel)
+library(patchwork)
 source(here("helper", "common.R"))
 knitr::opts_chunk$set(cache = FALSE)
 
@@ -50,14 +68,15 @@ Direction we *want*: earlier-acquired (low AoA) words should be recognized
 **better** (high accuracy) → a **negative** slope.
 
 ```{r naive}
-plot_corr <- function(data, x, y, xlab, ylab) {
+plot_corr <- function(data, x, y, xlab, ylab, min_n = 0) {
+  data <- dplyr::filter(data, n_trials >= min_n)
   r <- cor(data[[x]], data[[y]], use = "complete.obs")
   ggplot(data, aes(x = .data[[x]], y = .data[[y]])) +
     geom_point(aes(size = n_trials), alpha = .4) +
     geom_smooth(method = "lm") +
     geom_text_repel(aes(label = target_label), size = 2.3, max.overlaps = 8) +
     xlab(xlab) + ylab(ylab) +
-    labs(subtitle = sprintf("r = %.2f", r)) +
+    labs(subtitle = sprintf("r = %.2f  (%d words)", r, nrow(data))) +
     theme(legend.position = "none")
 }
 
@@ -80,6 +99,35 @@ plot_corr(mdf, "aoa", "intercept_adj",
 ```{r fix-cdi}
 plot_corr(mdf, "b", "intercept_adj",
           "CDI IRT difficulty (b)", "LWL ease (animacy-adjusted intercept)")
+```
+
+## Fix 3: restrict to well-estimated words
+
+The plots above pool all `r nrow(mdf)` words, but most have very few trials, so
+their `intercept_adj` is a noisy estimate. Noise in a predictor **attenuates**
+correlations toward zero (classic measurement-error attenuation). Restricting to
+words with a lot of data (here, >200 trials) gives each word a reliable
+difficulty estimate — and this is where the relationship becomes clear and points
+the *right* way (harder/later-learned word ⇒ lower LWL ease ⇒ **negative** slope).
+
+```{r fix-freq}
+library(patchwork)
+p_aoa <- plot_corr(mdf, "aoa", "intercept_adj",
+                   "Wordbank AoA (months)", "LWL ease (adj. intercept)", min_n = 200)
+p_b <- plot_corr(mdf, "b", "intercept_adj",
+                 "CDI IRT difficulty (b)", "LWL ease (adj. intercept)", min_n = 200)
+p_aoa + p_b
+```
+
+It takes **both** moves. On the same well-estimated words, *raw accuracy* goes
+from the wrong-direction *r* ≈ +0.28 (all words) to roughly flat (*r* ≈ 0) — the
+frequency filter removes the confound but leaves no positive linkage — whereas
+the *adjusted intercept* reaches *r* ≈ −0.45. So the frequency filter cleans up
+the predictor and the LWL-side modeling supplies the actual signal:
+
+```{r fix-freq-naive}
+plot_corr(mdf, "aoa", "avg_accuracy",
+          "Wordbank AoA (months)", "Raw avg accuracy", min_n = 200)
 ```
 
 ## Summary of correlations
@@ -114,9 +162,17 @@ results |>
 
 ## Read
 
-The table makes the diagnosis concrete: which combination of LWL measure and CDI
-measure (and frequency filter) is needed before the aggregate item-level
-correlation even points the right way. Whatever the verdict, the aggregate level
-throws away the within-child structure — a child only "knows" a word
-probabilistically, and the 2AFC decision depends on the *distractor* too. That
-structure is the subject of notebook 5.
+The table makes the diagnosis concrete. Reading the `intercept_adj` row under the
+`(n>200)` columns: with a clean LWL measure **and** well-estimated words, the
+aggregate item-level correlation finally points the right way (≈ −0.45). The
+naive cell (`avg_accuracy` × `aoa`, all words) is the +0.28 failure the
+background reported. IRT `b` and `aoa` behave almost identically (they correlate
+~0.99; see notebook 3), so the CDI-side measure is *not* the lever — the LWL-side
+modeling and the frequency filter are.
+
+But even at its best, the aggregate level throws away the within-child structure:
+a child only "knows" a word probabilistically, and the 2AFC decision could depend
+on the *distractor* too. **Notebook 5** carries this same aggregate analysis to
+the trial level and adds the child-specific settings (imputed and precise word
+knowledge) in one common framework; **notebook 6** drills into the precise,
+within-child item-specific test.

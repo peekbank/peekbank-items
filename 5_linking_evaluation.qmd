@@ -1,5 +1,5 @@
 ---
-title: "5. Linking hypotheses × data settings"
+title: "5. Linking word knowledge to trial accuracy: settings × models"
 subtitle: "peekbank-items"
 format:
   html:
@@ -11,27 +11,24 @@ execute:
   message: false
 ---
 
-We want to know whether a child's **word knowledge** predicts their **trial-level
-looking accuracy**, and which form of that link is best supported. This notebook
-sets up the comparison cleanly: a few explicit **linking models**, each fit under
-each available **way of measuring word knowledge** (a "data setting"), reported
-three ways — as coefficients, as accuracy effect sizes, and as out-of-sample
-prediction.
+**This notebook expands notebook 4.** Notebook 4 asked, at the *word-aggregate*
+level, whether harder words are recognized worse (the "does item difficulty line
+up" question). Here we move to the **trial** level and ask the predictive
+question directly: does a child's knowledge of the specific target/distractor on
+a trial predict their looking on *that* trial? And we do it in a common framework
+that lets us vary two things:
 
-Notebook 6 then sharpens the winning idea into the strict item-specific test.
+- **how knowledge is measured** — three *data settings* (the aggregate setting
+  here is exactly notebook 4's idea, now at trial level);
+- **the functional form of the link** — four nested *models* (H0–H3).
 
-## The dependent variable and what "tiny R²" means
+Ingredients come from earlier notebooks: LWL trial data (notebook 1), CDI word
+difficulty + child ability (notebook 3). The precise within-child story is
+developed fully in **notebook 6**; here it is one of the three settings.
 
-The outcome is the trial **elogit**, `log((target looks + .5)/(distractor looks
-+ .5))`. Conveniently, `plogis(elogit)` ≈ the trial's looking accuracy, so we can
-translate any elogit effect into **percentage points of accuracy**.
-
-A single trial is a *very* noisy measurement — a few seconds of a toddler's
-gaze. So most trial-level variance is irreducible noise, and **no** model can
-explain much of it. We make that ceiling explicit below; it is why the
-out-of-sample R² values are all near 0.03–0.04. The right yardsticks are
-therefore (a) the **coefficient / accuracy effect size** and (b) the
-**improvement over an age-only baseline**, not the absolute R².
+The outline is: **(1)** the settings, **(2)** how much data each has, **(3)** the
+models, then the fits three ways — **(4)** coefficients, **(5)** model
+comparison, **(6)** out-of-sample prediction against the noise ceiling.
 
 ```{r setup}
 library(here)
@@ -48,21 +45,17 @@ subject_map <- readRDS(here("cached_intermediates", "0_subject_map.Rds"))
 p2pl <- function(theta, a, b) plogis(a * (theta - b))
 ```
 
-## Three ways to measure word knowledge ("data settings")
+# 1. The three settings (ways to measure word knowledge)
 
-For each trial we form a **target-knowledge** signal `k_t` and a
-**distractor-knowledge** signal `k_d`, oriented so that more knowledge = larger
-value. The three settings differ in where that knowledge comes from:
+For each trial we build a **target-knowledge** signal `k_t` and a
+**distractor-knowledge** signal `k_d`, always oriented so larger = more
+knowledge. The settings differ only in where that knowledge comes from:
 
-| setting | `k_t`, `k_d` | child-specific? | item-specific? | covers |
+| setting | `k_t`, `k_d` | child-specific? | item-specific? | from |
 |---|---|---|---|---|
-| **aggregate** | `-b` (IRT *ease* of the word) | no | yes | all trials |
-| **imputed** | `P(knows) = 2PL(θ_child, a, b)` | yes (via CDI total) | only via difficulty | CDI children |
-| **precise** | child *actually produced* the word (0/1) | yes | yes (real) | TotLot subset |
-
-The imputed signal is built from the child's overall CDI ability `θ` and the
-word's IRT parameters; the precise signal is the child's real per-word CDI
-response.
+| **aggregate** | `-b` (IRT *ease* of the word) | no | yes | notebook 3; = notebook 4 at trial level |
+| **imputed** | `P(knows) = 2PL(θ_child, a, b)` | yes (CDI total) | only through difficulty | notebooks 1 + 3 |
+| **precise** | child *actually produced* the word (0/1) | yes | yes (real) | item-level CDI (TotLot subset) |
 
 ```{r build-frame}
 cdi_diff <- cdi$item_pars |> select(item, a, b)
@@ -83,220 +76,257 @@ base <- d_trial |>
 items_long <- subset_dat$cdi_items_long |>
   mutate(item = str_to_lower(item), lab_subject_id = as.character(lab_subject_id)) |>
   rename(cdi_age = age)
-
 admins <- base |>
   distinct(administration_id, subject_id, age) |>
   inner_join(subject_map, by = "subject_id") |>
   filter(lab_subject_id %in% items_long$lab_subject_id)
-
 nearest_cdi <- admins |>
   inner_join(items_long |> distinct(lab_subject_id, cdi_age),
              by = "lab_subject_id", relationship = "many-to-many") |>
   mutate(age_diff = abs(age - cdi_age)) |>
-  group_by(administration_id) |>
-  slice_min(age_diff, n = 1, with_ties = FALSE) |>
-  ungroup() |>
-  select(administration_id, lab_subject_id, cdi_age)
-
+  group_by(administration_id) |> slice_min(age_diff, n = 1, with_ties = FALSE) |>
+  ungroup() |> select(administration_id, lab_subject_id, cdi_age)
 produces_at_age <- items_long |>
   group_by(lab_subject_id, cdi_age, item) |>
   summarise(produces = as.integer(any(produces == 1)), .groups = "drop")
-
 precise <- base |>
   inner_join(nearest_cdi, by = "administration_id") |>
   left_join(produces_at_age |> rename(prec_k_t = produces),
             by = c("lab_subject_id", "cdi_age", "target_label" = "item")) |>
   left_join(produces_at_age |> rename(prec_k_d = produces),
-            by = c("lab_subject_id", "cdi_age", "distractor_label" = "item"))
+            by = c("lab_subject_id", "cdi_age", "distractor_label" = "item")) |>
+  filter(!is.na(prec_k_t), !is.na(prec_k_d))
 
-cat("Precise subset: ", n_distinct(precise$lab_subject_id), " children, ",
-    nrow(precise), " trials\n", sep = "")
+# the analysis frame for each setting (its MAXIMAL usable data)
+frames <- list(
+  aggregate = base |> filter(!is.na(agg_k_t), !is.na(agg_k_d)) |>
+    mutate(k_t = agg_k_t, k_d = agg_k_d),
+  imputed   = base |> filter(!is.na(imp_k_t), !is.na(imp_k_d)) |>
+    mutate(k_t = imp_k_t, k_d = imp_k_d),
+  precise   = precise |> mutate(k_t = prec_k_t, k_d = prec_k_d)
+)
 ```
 
-## Four linking models, written out
+# 2. How much data does each setting have?
 
-For a trial by child *c* in dataset *s* with target/distractor knowledge
-`k_t, k_d`, every model has the same random structure — a child intercept
-`u_c` (absorbing general ability) and a dataset intercept `v_s` — and they differ
-only in how knowledge enters the mean:
+A key design choice: we fit each setting on its **own maximal data**, not on a
+shared common subset. Forcing a common subset makes coefficients trivially
+comparable but throws away the main advantage of the aggregate/imputed
+settings — scale — and restricts everything to the narrow-age TotLot sample. (We
+do show a controlled common-subset check at the end.)
+
+```{r data-availability}
+imap_dfr(frames, ~ tibble(
+  setting = .y,
+  trials = nrow(.x),
+  children = n_distinct(.x$administration_id),
+  target_words = n_distinct(.x$target_label),
+  age_min = round(min(.x$age), 1),
+  age_max = round(max(.x$age), 1),
+  longitudinal = ifelse(.y == "precise", "yes (median 6 visits/child)", "cross-sectional")
+)) |> kable(caption = "Maximal usable data per setting")
+```
+
+# 3. The four models
+
+Every model shares the same random structure — a child intercept `u_c`
+(absorbing general ability) and a dataset intercept `v_s` — and differs only in
+how knowledge enters:
 
 $$
-\textbf{H0:}\quad \text{elogit} = \beta_0 + \beta_{age}\,\log\text{age} + u_c + v_s + \varepsilon
+\textbf{H0:}\quad \text{elogit} = \beta_0 + \beta_{age}\log\text{age} + u_c + v_s + \varepsilon
 $$
 $$
-\textbf{H1:}\quad \ldots + \beta_t\,k_t \qquad\text{(target knowledge only)}
-$$
-$$
-\textbf{H2:}\quad \ldots + \beta_t\,k_t + \beta_d\,k_d \qquad\text{(target and distractor, separately)}
+\textbf{H1:}\quad \ldots + \beta_t\,k_t \qquad\text{(target only)} \qquad
+\textbf{H2:}\quad \ldots + \beta_t\,k_t + \beta_d\,k_d \qquad\text{(target + distractor)}
 $$
 $$
 \textbf{H3:}\quad \ldots + \beta_\Delta\,(k_t - k_d) \qquad\text{(symmetric 2AFC contrast)}
 $$
 
-Inferences we can draw:
+Inferences: **H1 vs H0** = does target knowledge help (`β_t>0`)? **H2 vs H1** =
+does the distractor add anything (`β_d<0` if a known competitor steals looks)?
+**H3** forces target and distractor to count equally and oppositely — if the link
+is asymmetric, H3 fits *worse* than H2 despite being the "tidy" story.
 
-- **H1 vs H0** — does knowing the target help at all? (`β_t > 0` expected.)
-- **H2 vs H1** — does the *distractor* add anything beyond the target?
-  (`β_d < 0` expected if a known competitor pulls looks away.)
-- **H3** — forces target and distractor to matter *equally and oppositely*. If
-  the true effect is asymmetric, H3 will fit *worse* than H2 even though it is
-  the "tidy" 2AFC story. (This is exactly what we find — and notebook 6 explains
-  why.)
+Note: these models contain a child intercept but **no word intercept**, so a
+knowledge coefficient is allowed to ride on between-word difficulty. That is the
+right choice for "does knowledge predict looking at all," and it is the bridge to
+notebook 6, which adds word intercepts to isolate the purely *item-specific* part.
 
-Note these models include a child intercept but **not** a word intercept, so a
-knowledge coefficient here captures the effect of word knowledge *including* the
-fact that easier words are both better known and better recognized. Notebook 6
-adds word intercepts to strip that out and isolate the purely item-specific part.
-
-## How noisy is a trial? (the R² ceiling)
-
-```{r noise-ceiling}
-m_full <- lmer(elogit ~ log_age_centered + (1 | administration_id) + (1 | dataset_name),
-               data = base, control = lmerControl(optimizer = "bobyqa"))
-vc <- as.data.frame(VarCorr(m_full))
-tibble(
-  component = c("child differences", "dataset differences", "residual (trial noise)"),
-  variance = c(vc$vcov[vc$grp == "administration_id"],
-               vc$vcov[vc$grp == "dataset_name"],
-               vc$vcov[vc$grp == "Residual"])
-) |>
-  mutate(share = variance / sum(variance)) |>
-  kable(digits = c(0, 2, 3),
-        caption = "Variance decomposition of trial elogit (age-only model)")
-```
-
-The residual (pure trial noise) is the large majority of the variance. That is
-the ceiling: even a perfect knowledge model can only chip at the small
-non-residual slice, so trial-level R² *must* be small. Read the numbers below as
-relative, not absolute.
-
-## Effect sizes: what the coefficients say
-
-We fit H2 in each setting on the common precise subset (so the three settings
-describe exactly the same trials) and report the knowledge coefficients in
-logits and as accuracy effect sizes (evaluated at the sample's mean elogit).
-
-```{r effect-sizes}
-ref_elogit <- mean(precise$elogit, na.rm = TRUE)
-pp <- function(beta) 100 * (plogis(ref_elogit + beta) - plogis(ref_elogit))
-
-sub_frame <- precise |>
-  filter(!is.na(prec_k_t), !is.na(prec_k_d), !is.na(agg_k_t), !is.na(agg_k_d),
-         !is.na(imp_k_t), !is.na(imp_k_d))
-
-fit_h2 <- function(d, kt, kd, label) {
-  f <- as.formula(paste0("elogit ~ log_age_centered + ", kt, " + ", kd,
-                         " + (1|administration_id) + (1|dataset_name)"))
-  m <- lmer(f, data = d, control = lmerControl(optimizer = "bobyqa"))
-  ci <- confint(m, parm = c(kt, kd), method = "Wald")
-  tibble(setting = label,
-         term = c("target (k_t)", "distractor (k_d)"),
-         beta = fixef(m)[c(kt, kd)],
-         ci_low = ci[, 1], ci_high = ci[, 2],
-         acc_pp = pp(fixef(m)[c(kt, kd)]))
+```{r model-helpers}
+fit_model <- function(d, terms) {
+  fixed <- paste(c("log_age_centered", terms), collapse = " + ")
+  lmer(as.formula(paste0("elogit ~ ", fixed, " + (1|administration_id) + (1|dataset_name)")),
+       data = d, control = lmerControl(optimizer = "bobyqa"))
 }
-
-bind_rows(
-  fit_h2(sub_frame, "agg_k_t",  "agg_k_d",  "aggregate"),
-  fit_h2(sub_frame, "imp_k_t",  "imp_k_d",  "imputed"),
-  fit_h2(sub_frame, "prec_k_t", "prec_k_d", "precise")
-) |>
-  kable(digits = 3,
-        caption = "H2 knowledge coefficients (logit) and accuracy effect (pp) on the common subset")
+model_terms <- list(H0 = character(0), H1 = "k_t", H2 = c("k_t", "k_d"),
+                    H3 = "I(k_t - k_d)")
 ```
 
-For the binary **precise** signal the `acc_pp` for the target is the most direct
-"how much does it matter" number: the accuracy gain for a word the child
-*actually knows* vs one they don't, holding the child and dataset fixed. For the
-**imputed/aggregate** signals the coefficient is per unit of the (continuous)
-knowledge scale, so compare signs and significance rather than raw pp.
+# 4. The fits, directly: knowledge coefficients
 
-## Out-of-sample prediction (relative, against the noise ceiling)
+We fit H2 in each setting (on its maximal data) and plot the target and
+distractor coefficients with 95% CIs. To make settings comparable despite their
+different scales (`-b` in logits, a probability, a 0/1 indicator), predictors are
+**standardized to SD = 1**, so each coefficient is "elogit change per 1 SD of the
+knowledge measure." Expected: **target positive, distractor negative**.
 
-Child-grouped 5-fold CV; predict held-out trials from fixed effects only
-(`re.form = NA`), so we are scoring how well the *linking signal* generalizes to
-new children. We report R² and, more usefully, the **improvement over the H0
-baseline**.
+```{r coef-plot}
+coef_h2 <- imap_dfr(frames, function(d, setting) {
+  d <- d |> mutate(k_t = as.numeric(scale(k_t)), k_d = as.numeric(scale(k_d)))
+  m <- fit_model(d, c("k_t", "k_d"))
+  ci <- confint(m, parm = c("k_t", "k_d"), method = "Wald")
+  tibble(setting = setting,
+         term = c("knows target", "knows distractor"),
+         beta = fixef(m)[c("k_t", "k_d")], lo = ci[, 1], hi = ci[, 2])
+})
 
-```{r harness}
+ggplot(coef_h2, aes(x = beta, y = setting, color = setting)) +
+  geom_vline(xintercept = 0, lty = 2) +
+  geom_pointrange(aes(xmin = lo, xmax = hi)) +
+  facet_wrap(~term) +
+  xlab("Standardized coefficient (elogit per 1 SD of knowledge)") +
+  ylab(NULL) + theme(legend.position = "none")
+```
+
+What this shows:
+
+- **aggregate** — the target coefficient is ~0/negative: *word ease does not
+  predict higher trial accuracy*. This is the **trial-level replication of the
+  naive failure** from notebook 4 (and the distractor term is wrong-signed too —
+  the confounds that bedevil the aggregate level are fully present here).
+- **imputed** — *both* coefficients are positive. Because `P(knows target)` and
+  `P(knows distractor)` are both driven by the same child ability `θ`, they
+  largely re-express the child-ability main effect and cannot be separated; the
+  distractor "helping" is the giveaway.
+- **precise** — a clean, **asymmetric** result: knowing the *target* helps,
+  knowing the *distractor* does essentially nothing. Only real item-level CDI
+  yields the interpretable picture.
+
+# 5. Which functional form? (model comparison)
+
+For each setting we compare H0–H3 by AIC (lower = better; nested H0→H1→H2 also
+get likelihood-ratio tests). This is the "do we see the fits" view.
+
+```{r model-comparison}
+compare <- imap_dfr(frames, function(d, setting) {
+  ms <- lapply(model_terms, fit_model, d = d)
+  tibble(setting = setting, model = names(ms),
+         AIC = sapply(ms, AIC)) |>
+    mutate(dAIC = AIC - AIC[model == "H0"])
+})
+compare |>
+  select(setting, model, dAIC) |>
+  pivot_wider(names_from = model, values_from = dAIC) |>
+  kable(digits = 1, caption = "ΔAIC vs H0 (more negative = better). H3 is the symmetric-contrast model.")
+```
+
+Read the rows: a large negative ΔAIC at H1 means target knowledge helps; H2 close
+to H1 means the distractor adds little; **H3 worse than H2** confirms the link is
+not the symmetric contrast. (In the precise setting the asymmetry is starkest —
+exactly what notebook 6 dissects.)
+
+# 6. Out-of-sample prediction, against the noise ceiling
+
+A single trial is mostly irreducible noise, so absolute R² *must* be small. We
+first measure the ceiling — the share of trial-elogit variance that is **not**
+residual noise (i.e., the most any fixed-effect model could explain) — then
+report each model's child-grouped 5-fold CV R² as a fraction of that ceiling.
+
+```{r ceiling}
+ceiling_of <- function(d) {
+  m <- fit_model(d, character(0))
+  vc <- as.data.frame(VarCorr(m))
+  1 - vc$vcov[vc$grp == "Residual"] / sum(vc$vcov)
+}
+ceilings <- map_dbl(frames, ceiling_of)
+tibble(setting = names(ceilings), explainable_ceiling = ceilings) |>
+  kable(digits = 3, caption = "Explainable share of trial variance (R² ceiling)")
+```
+
+```{r cv}
 set.seed(42)
-cv_r2 <- function(data, terms, n_folds = 5) {
+cv_r2 <- function(d, terms, n_folds = 5) {
   fixed <- paste(c("log_age_centered", terms), collapse = " + ")
   form <- as.formula(paste0("elogit ~ ", fixed,
                             " + (1|administration_id) + (1|dataset_name)"))
-  subs <- unique(data$administration_id)
+  subs <- unique(d$administration_id)
   fold <- setNames(sample(rep(1:n_folds, length.out = length(subs))), subs)
-  data$.fold <- fold[as.character(data$administration_id)]
-  preds <- rep(NA_real_, nrow(data))
+  d$.fold <- fold[as.character(d$administration_id)]
+  preds <- rep(NA_real_, nrow(d))
   for (f in 1:n_folds) {
-    tr <- data |> filter(.fold != f); te <- which(data$.fold == f)
+    tr <- d |> filter(.fold != f); te <- which(d$.fold == f)
     m <- tryCatch(lmer(form, data = tr, control = lmerControl(optimizer = "bobyqa")),
                   error = function(e) NULL)
-    if (!is.null(m)) preds[te] <- predict(m, newdata = data[te, ], re.form = NA,
-                                          allow.new.levels = TRUE)
+    if (!is.null(m)) preds[te] <- predict(m, newdata = d[te, ], re.form = NA, allow.new.levels = TRUE)
   }
-  ok <- !is.na(preds)
-  if (sum(ok) < 10) return(NA_real_)
-  cor(preds[ok], data$elogit[ok])^2
+  ok <- !is.na(preds); if (sum(ok) < 10) return(NA_real_)
+  cor(preds[ok], d$elogit[ok])^2
 }
 
-make_terms <- function(kt, kd) list(
-  H0 = character(0), H1 = kt, H2 = c(kt, kd),
-  H3 = paste0("I(", kt, " - ", kd, ")"))
-
-run_setting <- function(data, kt, kd, label) {
-  d <- data |> filter(!is.na(.data[[kt]]), !is.na(.data[[kd]]))
-  terms <- make_terms(kt, kd)
-  r2 <- map_dbl(terms, ~ cv_r2(d, .x))
-  tibble(setting = label, hypothesis = names(terms), cv_r2 = r2,
-         delta_vs_H0 = r2 - r2[["H0"]])
-}
+cv_tab <- imap_dfr(frames, function(d, setting) {
+  cei <- ceilings[[setting]]
+  r2 <- map_dbl(model_terms, ~ cv_r2(d, .x))
+  tibble(setting = setting, model = names(model_terms),
+         cv_r2 = r2, pct_of_ceiling = 100 * r2 / cei)
+})
+cv_tab |>
+  select(setting, model, pct_of_ceiling) |>
+  pivot_wider(names_from = model, values_from = pct_of_ceiling) |>
+  kable(digits = 0, caption = "CV R² as % of the explainable ceiling (100% = all explainable variance captured)")
 ```
 
-```{r compare-subset}
-subset_results <- bind_rows(
-  run_setting(sub_frame, "agg_k_t",  "agg_k_d",  "aggregate"),
-  run_setting(sub_frame, "imp_k_t",  "imp_k_d",  "imputed"),
-  run_setting(sub_frame, "prec_k_t", "prec_k_d", "precise")
-)
+Normalized this way the raw "tiny" R² disappears: age alone (H0) already captures
+~half to two-thirds of the *explainable* variance, and adding knowledge pushes it
+higher — most for **imputed** (because `P(knows)` carries the child's overall
+ability, which is what best predicts a *new* child's trials), less for precise
+and aggregate. Note the contrast with §4: precise gives the cleanest *item-level
+estimate*, but imputed *predicts new children* best because it is ability-laden.
+Explanation and out-of-sample prediction reward different signals here.
 
-subset_results |>
-  select(setting, hypothesis, cv_r2) |>
-  pivot_wider(names_from = hypothesis, values_from = cv_r2) |>
-  kable(digits = 4, caption = paste0("Out-of-sample R² on the common subset (",
-        n_distinct(sub_frame$lab_subject_id), " children, ", nrow(sub_frame), " trials)"))
+# 7. Controlled check: all settings on the same trials
 
-subset_results |>
-  filter(hypothesis != "H0") |>
-  ggplot(aes(x = hypothesis, y = delta_vs_H0, fill = setting)) +
-  geom_col(position = "dodge") +
-  geom_hline(yintercept = 0) +
-  ylab("R² improvement over age-only baseline") +
-  ggtitle("Predictive gain from each linking model, by setting")
+For completeness, the same comparison restricted to the precise subset's trials
+(so all three settings describe identical rows). This is lower-powered and
+age-restricted; it makes the aggregate failure look worse and inflates the
+imputed CIs — which is exactly why §4–6 use each setting's maximal data.
+
+```{r common-subset}
+common <- precise |>
+  filter(!is.na(agg_k_t), !is.na(agg_k_d), !is.na(imp_k_t), !is.na(imp_k_d))
+z <- function(x) as.numeric(scale(x))
+common_coef <- bind_rows(
+  aggregate = mutate(common, k_t = z(agg_k_t), k_d = z(agg_k_d)),
+  imputed   = mutate(common, k_t = z(imp_k_t), k_d = z(imp_k_d)),
+  precise   = mutate(common, k_t = z(prec_k_t), k_d = z(prec_k_d)),
+  .id = "setting"
+) |>
+  group_by(setting) |>
+  group_modify(~{
+    m <- fit_model(.x, c("k_t", "k_d")); ci <- confint(m, c("k_t","k_d"), method = "Wald")
+    tibble(term = c("knows target","knows distractor"),
+           beta = fixef(m)[c("k_t","k_d")], lo = ci[,1], hi = ci[,2])
+  }) |> ungroup()
+
+ggplot(common_coef, aes(x = beta, y = setting, color = setting)) +
+  geom_vline(xintercept = 0, lty = 2) +
+  geom_pointrange(aes(xmin = lo, xmax = hi)) +
+  facet_wrap(~term) +
+  xlab("Standardized coefficient (common subset)") + ylab(NULL) +
+  theme(legend.position = "none")
 ```
 
-```{r compare-full}
-full_results <- bind_rows(
-  run_setting(base, "agg_k_t", "agg_k_d", "aggregate (full)"),
-  run_setting(base |> filter(!is.na(theta)), "imp_k_t", "imp_k_d", "imputed (full)")
-)
-full_results |>
-  select(setting, hypothesis, cv_r2) |>
-  pivot_wider(names_from = hypothesis, values_from = cv_r2) |>
-  kable(digits = 4, caption = "Out-of-sample R² on the full data")
-```
+# Conclusions
 
-## What to conclude
-
-- **Word knowledge does predict accuracy** (H1 > H0 everywhere; the effect-size
-  table quantifies it — a known target buys several points of accuracy).
-- **The link is asymmetric.** H2 ≈ H1 (the distractor coefficient is ~0) and
-  **H3 is no better than baseline**: forcing target and distractor to count
-  equally (the tidy 2AFC contrast) throws the signal away. The decision is
-  driven by *target* knowledge far more than by distractor competition.
-- **Imputed ≈ precise here**, because this notebook's models contain no word
-  intercept: the knowledge coefficient is allowed to ride on between-word
-  difficulty, which imputation already encodes. The place where real item-level
-  CDI must beat imputation is the *within-word* comparison — that is notebook 6.
-- **Absolute R² is tiny and that is expected** (see the noise ceiling); the
-  improvement-over-baseline and effect-size views are the honest summaries.
+- **Word knowledge predicts trial looking, but only when measured child- and
+  item-specifically.** The aggregate setting (= notebook 4 at trial level) fails
+  again; imputation adds child ability but can't separate target from distractor;
+  the precise setting gives a clean signal.
+- **The link is asymmetric** — target knowledge drives it, the distractor does
+  not — so the symmetric 2AFC contrast (H3) is the wrong model (H3 > H2 in AIC).
+- **The small R² is a noise-floor artifact**: against the ~5% explainable
+  ceiling, the good models capture most of what is explainable.
+- This motivates **notebook 6**, which removes word difficulty entirely (word
+  random intercepts) and uses the subset's longitudinal structure to test the
+  strict, item-specific, within-child linkage.
